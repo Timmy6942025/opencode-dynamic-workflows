@@ -1,0 +1,14 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["opencode-dynamic-workflows/plugin"],
+  "agent": {
+    "dynamic-verifier": {
+      "description": "Read-only verifier for dynamic workflow outputs",
+      "mode": "subagent",
+      "permission": {
+        "edit": "deny",
+        "bash": "ask"
+      }
+    }
+  }
+}

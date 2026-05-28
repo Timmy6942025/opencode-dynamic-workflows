@@ -1,0 +1,41 @@
+{
+  "name": "opencode-dynamic-workflows",
+  "version": "0.1.0",
+  "description": "Model-agnostic dynamic workflow orchestration for OpenCode.",
+  "type": "module",
+  "types": "./dist/src/index.d.ts",
+  "license": "MIT",
+  "bin": {
+    "ocdw": "./dist/src/cli.js",
+    "opencode-dynamic-workflows": "./dist/src/cli.js"
+  },
+  "exports": {
+    ".": "./dist/src/index.js",
+    "./plugin": "./dist/src/plugin.js"
+  },
+  "files": [
+    "dist/src",
+    "docs",
+    "examples",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "qa": "npm run build && node --test dist/test/*.test.js",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "latest",
+    "@opencode-ai/sdk": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "typescript": "latest"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
