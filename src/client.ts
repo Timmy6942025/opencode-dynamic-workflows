@@ -98,6 +98,10 @@ export async function createWorkflowClient(options: CreateWorkflowClientOptions)
   return new SdkLikeWorkflowClient(client, server, options.directory, actualBaseUrl)
 }
 
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return value !== null && typeof value === "object" && "then" in value && typeof (value as PromiseLike<unknown>).then === "function"
+}
+
 function withContext<T>(operation: string, url: string, fn: () => Promise<T>): Promise<T> {
   return fn().catch((error) => {
     const original = error instanceof Error ? error.message : String(error)
@@ -221,7 +225,7 @@ export class SdkLikeWorkflowClient implements WorkflowClient {
     if (!this.server) return
     try {
       const result = this.server.close()
-      if (result && typeof (result as any).then === "function") {
+      if (isPromiseLike(result)) {
         await result
       }
     } catch {

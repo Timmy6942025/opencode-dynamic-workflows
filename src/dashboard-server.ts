@@ -67,12 +67,23 @@ export async function startDashboardServer(options: DashboardServerOptions): Pro
         const { host, port: ocPort } = parseHostPort(baseUrl)
         const reachable = await checkPortOpen(host, ocPort, 2_000)
         const status = getServerStatus()
+        // Derive stage from live TCP check when cached status is stale/idle
+        let stage = status.stage
+        let message = status.message
+        if (reachable && (stage === "idle" || stage === "failed")) {
+          stage = "ready"
+          message = `OpenCode server connected at ${baseUrl}`
+        }
+        if (!reachable && stage === "ready") {
+          stage = "failed"
+          message = `OpenCode server at ${baseUrl} was reachable but is now down`
+        }
         res.writeHead(200, { "Content-Type": "application/json" })
         res.end(JSON.stringify({
           connected: reachable,
           baseUrl,
-          stage: status.stage,
-          message: status.message,
+          stage,
+          message,
           elapsedMs: status.elapsedMs,
           error: status.error,
         }))

@@ -697,7 +697,10 @@ export class DynamicWorkflowRunner {
     const taskState = state.tasks[taskId]
     taskState.attempts.push(attempt)
     taskState.output = attempt.output ?? taskState.output
-    taskState.status = attempt.error ? "failed" : "completed"
+    if (attempt.error) {
+      taskState.status = "failed"
+    }
+    // Do NOT set status to "completed" here — that happens only after verification passes in completeTask()
     taskState.updatedAt = nowIso()
     await this.store.save(state)
     return taskState

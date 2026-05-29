@@ -6,7 +6,6 @@ export function sleep(ms: number): Promise<void> {
 
 export async function checkPortOpen(host: string, port: number, timeoutMs = 3_000): Promise<boolean> {
   return new Promise((resolve) => {
-    const socket = connect(port, host)
     let done = false
     const finish = (open: boolean) => {
       if (done) return
@@ -14,10 +13,14 @@ export async function checkPortOpen(host: string, port: number, timeoutMs = 3_00
       try { socket.destroy() } catch { /* ignore */ }
       resolve(open)
     }
-    socket.on("connect", () => finish(true))
-    socket.on("error", () => finish(false))
-    socket.on("timeout", () => finish(false))
+
+    const socket = connect(port, host)
     socket.setTimeout(timeoutMs)
+    socket.once("connect", () => finish(true))
+    socket.once("error", () => finish(false))
+    socket.once("timeout", () => finish(false))
+
+    // Fallback timer in case socket events don't fire on some platforms
     setTimeout(() => finish(false), timeoutMs + 500)
   })
 }
