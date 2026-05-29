@@ -234,6 +234,8 @@ async function createRunner(options: DynamicWorkflowOptions, json: boolean) {
   return { client, store, runner }
 }
 
+
+
 function buildOptions(objective: string, parsed: ParsedArgs): DynamicWorkflowOptions {
   const cwd = resolve(getStringFlag(parsed, "cwd") ?? process.cwd())
   const options = defaultWorkflowOptions(objective, cwd)

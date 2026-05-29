@@ -1,3 +1,5 @@
+import { connect } from "node:net"
+
 import type { ClientPromptOptions, PromptResult, ShellResult, WorkflowClient } from "./types.js"
 import { promptResultFromRaw, splitModelId, unwrapResponse } from "./util.js"
 
@@ -14,25 +16,127 @@ export interface CreateWorkflowClientOptions {
   config?: Record<string, unknown>
 }
 
-export async function createWorkflowClient(options: CreateWorkflowClientOptions): Promise<WorkflowClient> {
-  const sdk = await import("@opencode-ai/sdk")
-  if (options.startServer) {
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function checkPortOpen(host: string, port: number, timeoutMs = 3_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = connect(port, host)
+    let done = false
+    const finish = (open: boolean) => {
+      if (done) return
+      done = true
+      try { socket.destroy() } catch { /* ignore */ }
+      resolve(open)
+    }
+    socket.on("connect", () => finish(true))
+    socket.on("error", () => finish(false))
+    socket.on("timeout", () => finish(false))
+    socket.setTimeout(timeoutMs)
+    setTimeout(() => finish(false), timeoutMs + 500)
+  })
+}
+
+function parseHostPort(baseUrl: string): { host: string; port: number } {
+  let urlStr = baseUrl.trim()
+  // Handle bare host:port strings (e.g., "localhost:4097" or "127.0.0.1:4096")
+  if (!urlStr.includes("://")) {
+    urlStr = `http://${urlStr}`
+  }
+  try {
+    const url = new URL(urlStr)
+    return { host: url.hostname, port: Number(url.port) || 4096 }
+  } catch {
+    return { host: "127.0.0.1", port: 4096 }
+  }
+}
+
+async function tryStartServer(
+  sdk: any,
+  options: CreateWorkflowClientOptions,
+): Promise<{ client: any; server: RawOpencodeServer | undefined; baseUrl: string }> {
+  const hostname = options.hostname ?? "127.0.0.1"
+  const port = options.port ?? 4096
+  const baseUrl = options.baseUrl ?? `http://${hostname}:${port}`
+
+  process.stderr.write(`[oc-dw] No OpenCode server found at ${baseUrl}. Auto-starting local server...\n`)
+  try {
     const instance = await sdk.createOpencode({
-      hostname: options.hostname ?? "127.0.0.1",
-      port: options.port ?? 4096,
+      hostname,
+      port,
       config: options.config ?? {},
       timeout: 10_000,
     })
-    return new SdkLikeWorkflowClient(instance.client, instance.server, options.directory)
+
+    // Poll until the port accepts connections (up to 5s)
+    const { host, port: p } = parseHostPort(baseUrl)
+    for (let i = 0; i < 25; i++) {
+      if (await checkPortOpen(host, p, 300)) {
+        process.stderr.write(`[oc-dw] OpenCode server ready at ${baseUrl}\n`)
+        return { client: instance.client, server: instance.server, baseUrl }
+      }
+      await sleep(200)
+    }
+    process.stderr.write(`[oc-dw] Warning: server started but port did not become ready within 5s. Proceeding anyway.\n`)
+    return { client: instance.client, server: instance.server, baseUrl }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error)
+    throw new Error(
+      `Failed to auto-start OpenCode server at ${baseUrl}.\n` +
+        `Reason: ${msg}\n` +
+        `\nTo fix this, either:\n` +
+        `  1. Start an OpenCode server manually (e.g. \`opencode start\`)\n` +
+        `  2. Pass --start-server to let oc-dw start one automatically\n` +
+        `  3. Pass --base-url <url> to point to an existing server`,
+    )
+  }
+}
+
+export async function createWorkflowClient(options: CreateWorkflowClientOptions): Promise<WorkflowClient> {
+  const sdk = await import("@opencode-ai/sdk")
+  const baseUrl = options.baseUrl ?? "http://localhost:4096"
+
+  if (options.startServer === true) {
+    const { client, server, baseUrl: actualBaseUrl } = await tryStartServer(sdk, options)
+    return new SdkLikeWorkflowClient(client, server, options.directory, actualBaseUrl)
   }
 
-  const client = sdk.createOpencodeClient({
-    baseUrl: options.baseUrl ?? "http://localhost:4096",
-    throwOnError: true,
-    responseStyle: "fields",
-    directory: options.directory,
+  const { host, port } = parseHostPort(baseUrl)
+  const reachable = await checkPortOpen(host, port)
+  if (reachable) {
+    const client = sdk.createOpencodeClient({
+      baseUrl,
+      throwOnError: true,
+      responseStyle: "fields",
+      directory: options.directory,
+    })
+    return new SdkLikeWorkflowClient(client, undefined, options.directory, baseUrl)
+  }
+
+  if (options.startServer === false) {
+    throw new Error(
+      `No OpenCode server reachable at ${baseUrl} and --start-server was not set.\n` +
+        `Start a server with \`opencode start\` or pass --start-server to auto-start.`,
+    )
+  }
+
+  // Auto-start if not explicitly disabled
+  const { client, server, baseUrl: actualBaseUrl } = await tryStartServer(sdk, options)
+  return new SdkLikeWorkflowClient(client, server, options.directory, actualBaseUrl)
+}
+
+function withContext<T>(operation: string, url: string, fn: () => Promise<T>): Promise<T> {
+  return fn().catch((error) => {
+    const original = error instanceof Error ? error.message : String(error)
+    const enhanced = `[oc-dw] ${operation} failed.\n` +
+      `  Server: ${url}\n` +
+      `  Original error: ${original}\n` +
+      `  Tip: Ensure an OpenCode server is running (\`opencode start\`) or pass --start-server.`
+    const err = new Error(enhanced)
+    ;(err as Error & { cause?: unknown }).cause = error
+    throw err
   })
-  return new SdkLikeWorkflowClient(client, undefined, options.directory)
 }
 
 export class SdkLikeWorkflowClient implements WorkflowClient {
@@ -40,10 +144,16 @@ export class SdkLikeWorkflowClient implements WorkflowClient {
     private readonly client: any,
     private readonly server?: RawOpencodeServer,
     private readonly directory?: string,
+    private readonly baseUrl: string = "http://localhost:4096",
   ) {}
 
   async health(): Promise<unknown> {
-    return this.client.global?.health ? this.client.global.health() : true
+    if (this.client.global?.health) {
+      return withContext("Health check", this.baseUrl, () => this.client.global.health())
+    }
+    // For client-only mode, do a lightweight TCP reachability check
+    const { host, port } = parseHostPort(this.baseUrl)
+    return checkPortOpen(host, port, 2_000)
   }
 
   async providers(): Promise<unknown> {
@@ -54,14 +164,18 @@ export class SdkLikeWorkflowClient implements WorkflowClient {
   async createSession(title: string, parent?: string): Promise<string> {
     const body: Record<string, unknown> = { title }
     if (parent) body.parentID = parent
-    const response = await this.client.session.create({ body, query: this.query() })
+    const response = await withContext("Create session", this.baseUrl, () =>
+      this.client.session.create({ body, query: this.query() }),
+    )
     const session = unwrapResponse<any>(response)
     if (!session?.id) throw new Error(`OpenCode did not return a session id for "${title}".`)
     return session.id
   }
 
   async initSession(sessionId: string): Promise<void> {
-    await this.client.session.init({ path: { id: sessionId }, query: this.query() })
+    await withContext("Init session", this.baseUrl, () =>
+      this.client.session.init({ path: { id: sessionId }, query: this.query() }),
+    )
   }
 
   async prompt(sessionId: string, text: string, options: ClientPromptOptions = {}): Promise<PromptResult> {
@@ -73,22 +187,26 @@ export class SdkLikeWorkflowClient implements WorkflowClient {
     const model = splitModelId(options.model)
     if (model) body.model = model
     if (options.format) body.format = options.format
-    const response = await this.client.session.prompt({
-      path: { id: sessionId },
-      body,
-      query: this.query(),
-    })
+    const response = await withContext("Prompt session", this.baseUrl, () =>
+      this.client.session.prompt({
+        path: { id: sessionId },
+        body,
+        query: this.query(),
+      }),
+    )
     return promptResultFromRaw(response)
   }
 
   async shell(sessionId: string, command: string, timeoutMs?: number): Promise<ShellResult> {
     const body: Record<string, unknown> = { command, agent: "build" }
     if (timeoutMs) body.timeout = timeoutMs
-    const response = await this.client.session.shell({
-      path: { id: sessionId },
-      body,
-      query: this.query(),
-    })
+    const response = await withContext("Shell command", this.baseUrl, () =>
+      this.client.session.shell({
+        path: { id: sessionId },
+        body,
+        query: this.query(),
+      }),
+    )
     const data = unwrapResponse<any>(response)
     return {
       command,
@@ -128,7 +246,15 @@ export class SdkLikeWorkflowClient implements WorkflowClient {
   }
 
   async close(): Promise<void> {
-    await this.server?.close()
+    if (!this.server) return
+    try {
+      const result = this.server.close()
+      if (result && typeof (result as any).then === "function") {
+        await result
+      }
+    } catch {
+      // Best-effort cleanup.
+    }
   }
 
   private query(): Record<string, string> | undefined {

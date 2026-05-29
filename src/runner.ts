@@ -48,7 +48,6 @@ export class DynamicWorkflowRunner {
 
   async run(options: DynamicWorkflowOptions): Promise<WorkflowState> {
     let state = options.workflowId ? await this.store.load(options.workflowId) : await this.store.create(options)
-    await this.client.health()
     this.throwIfAborted(options)
 
     if (!state.plan) {
