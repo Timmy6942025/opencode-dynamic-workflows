@@ -68,7 +68,7 @@ async function main(argv: string[]): Promise<void> {
 
 async function runCommand(parsed: ParsedArgs): Promise<void> {
   const objective = parsed.positionals.join(" ").trim()
-  if (!objective) throw new Error("Missing objective. Usage: ocdw run \"<objective>\"")
+  if (!objective) throw new Error("Missing objective. Usage: oc-dw run \"<objective>\"")
   const options = buildOptions(objective, parsed)
   const { runner, client } = await createRunner(options, Boolean(parsed.flags.json))
   try {
@@ -214,11 +214,11 @@ async function setupCommand(parsed: ParsedArgs): Promise<void> {
   const global = Boolean(parsed.flags.global)
   const configPath = await setupOpenCodePlugin(cwd, global)
   if (parsed.flags.json) {
-    process.stdout.write(`${JSON.stringify({ configPath, plugin: "ocdw" }, null, 2)}\n`)
+    process.stdout.write(`${JSON.stringify({ configPath, plugin: "oc-dw" }, null, 2)}\n`)
     return
   }
   process.stdout.write(`OpenCode plugin configured at ${configPath}\n`)
-  process.stdout.write(`Plugin "ocdw" added. Restart OpenCode to load the dynamic workflows plugin.\n`)
+  process.stdout.write(`Plugin "oc-dw" added. Restart OpenCode to load the dynamic workflows plugin.\n`)
 }
 
 async function createRunner(options: DynamicWorkflowOptions, json: boolean) {
@@ -431,19 +431,19 @@ function printHelp(): void {
   process.stdout.write(`opencode-dynamic-workflows
 
 Usage:
-  ocdw run "<objective>" [options]
-  ocdw resume [workflow-id] [options]
-  ocdw status [workflow-id] [--cwd .]
-  ocdw list [--cwd .]
-  ocdw pause [workflow-id] [--cwd .]
-  ocdw abort [workflow-id] [--cwd .]
-  ocdw approve [workflow-id] [--cwd .]
-  ocdw reject [workflow-id] [--cwd .] [--reason "..."]
-  ocdw templates [--json]
-  ocdw skills [--json]
-  ocdw dashboard [workflow-id] [--cwd .]
-  ocdw install-command [--cwd .] [--global]
-  ocdw setup [--global]
+  oc-dw run "<objective>" [options]
+  oc-dw resume [workflow-id] [options]
+  oc-dw status [workflow-id] [--cwd .]
+  oc-dw list [--cwd .]
+  oc-dw pause [workflow-id] [--cwd .]
+  oc-dw abort [workflow-id] [--cwd .]
+  oc-dw approve [workflow-id] [--cwd .]
+  oc-dw reject [workflow-id] [--cwd .] [--reason "..."]
+  oc-dw templates [--json]
+  oc-dw skills [--json]
+  oc-dw dashboard [workflow-id] [--cwd .]
+  oc-dw install-command [--cwd .] [--global]
+  oc-dw setup [--global]
 
 Options:
   --cwd <path>                      Project directory

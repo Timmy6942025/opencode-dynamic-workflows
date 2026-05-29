@@ -1,5 +1,5 @@
 {
-  "name": "ocdw",
+  "name": "oc-dw",
   "version": "0.1.0",
   "description": "Seamless dynamic workflow orchestration for OpenCode. One command, zero config.",
   "type": "module",
@@ -7,7 +7,7 @@
   "types": "./dist/src/index.d.ts",
   "license": "MIT",
   "bin": {
-    "ocdw": "./dist/src/cli.js"
+    "oc-dw": "dist/src/cli.js"
   },
   "exports": {
     ".": {
@@ -54,7 +54,7 @@
   "author": "Timmy6942025",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Timmy6942025/opencode-dynamic-workflows.git"
+    "url": "git+https://github.com/Timmy6942025/opencode-dynamic-workflows.git"
   },
   "bugs": {
     "url": "https://github.com/Timmy6942025/opencode-dynamic-workflows/issues"

@@ -52,7 +52,7 @@ Routing roles:
 Examples:
 
 ```bash
-ocdw run "Migrate the test suite to Vitest" \
+oc-dw run "Migrate the test suite to Vitest" \
   --model planner=openai/gpt-5.1-codex \
   --model worker=anthropic/claude-sonnet-4-5 \
   --model verifier=google/gemini-3-pro \

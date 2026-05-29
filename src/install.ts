@@ -29,7 +29,7 @@ export async function setupOpenCodePlugin(cwd: string, global = false): Promise<
 
   const existing = Array.isArray(config.plugin) ? config.plugin : []
   const plugins = new Set(existing)
-  plugins.add("ocdw")
+  plugins.add("oc-dw")
   config.plugin = [...plugins]
 
   await mkdir(configDir, { recursive: true })
@@ -49,6 +49,6 @@ Launch a high-effort dynamic workflow for this objective:
 
 $ARGUMENTS
 
-Use the dynamic_workflow_run tool with background=true. If the tool is unavailable, tell the user to run ocdw setup.
+Use the dynamic_workflow_run tool with background=true. If the tool is unavailable, tell the user to run oc-dw setup.
 `
 }

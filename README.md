@@ -1,29 +1,29 @@
-# ocdw — OpenCode Dynamic Workflows
+# oc-dw — OpenCode Dynamic Workflows
 
 Seamless dynamic workflow orchestration for OpenCode. One command, zero config.
 
-Inspired by Claude Dynamic Workflows and OpenAI Codex `/goal`, `ocdw` lets OpenCode users launch high-effort workflows that **plan**, **fan out**, **coordinate**, **verify**, **resume**, and **summarize** many OpenCode subagent sessions across a codebase. Every model is an OpenCode `provider/model` id — use Claude, GPT, Gemini, Kimi, DeepSeek, Grok, local models, or any provider configured in OpenCode.
+Inspired by Claude Dynamic Workflows and OpenAI Codex `/goal`, `oc-dw` lets OpenCode users launch high-effort workflows that **plan**, **fan out**, **coordinate**, **verify**, **resume**, and **summarize** many OpenCode subagent sessions across a codebase. Every model is an OpenCode `provider/model` id — use Claude, GPT, Gemini, Kimi, DeepSeek, Grok, local models, or any provider configured in OpenCode.
 
 ## Install
 
 ```bash
-npm i -g ocdw
+npm i -g oc-dw
 ```
 
-That's it. The CLI `ocdw` is now available globally, and the OpenCode plugin is ready to configure.
+That's it. The CLI `oc-dw` is now available globally, and the OpenCode plugin is ready to configure.
 
 ### Zero-Config Plugin Setup
 
 ```bash
-ocdw setup
+oc-dw setup
 ```
 
-This adds `ocdw` to your OpenCode config. Restart OpenCode and the `dynamic_workflow_run` tool is available automatically. No `opencode.json` editing required.
+This adds `oc-dw` to your OpenCode config. Restart OpenCode and the `dynamic_workflow_run` tool is available automatically. No `opencode.json` editing required.
 
 ### Quick Start
 
 ```bash
-ocdw run "Refactor the auth layer to use JWT tokens instead of sessions" \
+oc-dw run "Refactor the auth layer to use JWT tokens instead of sessions" \
   --concurrency 8 \
   --max-agents 50
 ```
@@ -33,7 +33,7 @@ ocdw run "Refactor the auth layer to use JWT tokens instead of sessions" \
 Run OpenCode's server/TUI in the project you want to operate on, then launch a workflow:
 
 ```bash
-ocdw run "Refactor the auth layer to use JWT tokens instead of sessions" \
+oc-dw run "Refactor the auth layer to use JWT tokens instead of sessions" \
   --concurrency 8 \
   --max-agents 50
 ```
@@ -41,35 +41,35 @@ ocdw run "Refactor the auth layer to use JWT tokens instead of sessions" \
 Check progress:
 
 ```bash
-ocdw status
-ocdw dashboard
-ocdw list
+oc-dw status
+oc-dw dashboard
+oc-dw list
 ```
 
 Resume or abort:
 
 ```bash
-ocdw resume <workflow-id>
-ocdw abort <workflow-id>
-ocdw pause <workflow-id>
+oc-dw resume <workflow-id>
+oc-dw abort <workflow-id>
+oc-dw pause <workflow-id>
 ```
 
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
-| `ocdw run "<objective>"` | Start a new workflow |
-| `ocdw resume [id]` | Resume a paused or failed workflow |
-| `ocdw status [id]` | Show workflow state and task summary |
-| `ocdw list` | List all workflows |
-| `ocdw abort [id]` | Abort a running workflow |
-| `ocdw pause [id]` | Pause a running workflow |
-| `ocdw approve [id]` | Approve a workflow awaiting approval |
-| `ocdw reject [id]` | Reject a workflow awaiting approval |
-| `ocdw templates` | List built-in workflow templates |
-| `ocdw skills` | List built-in skill constraints |
-| `ocdw dashboard [id]` | Show real-time progress dashboard |
-| `ocdw install-command` | Install the `/workflow` command in OpenCode |
+| `oc-dw run "<objective>"` | Start a new workflow |
+| `oc-dw resume [id]` | Resume a paused or failed workflow |
+| `oc-dw status [id]` | Show workflow state and task summary |
+| `oc-dw list` | List all workflows |
+| `oc-dw abort [id]` | Abort a running workflow |
+| `oc-dw pause [id]` | Pause a running workflow |
+| `oc-dw approve [id]` | Approve a workflow awaiting approval |
+| `oc-dw reject [id]` | Reject a workflow awaiting approval |
+| `oc-dw templates` | List built-in workflow templates |
+| `oc-dw skills` | List built-in skill constraints |
+| `oc-dw dashboard [id]` | Show real-time progress dashboard |
+| `oc-dw install-command` | Install the `/workflow` command in OpenCode |
 
 ## CLI Options
 
@@ -131,7 +131,7 @@ Templates provide pre-configured plans and options for common workflow types:
 Use a template:
 
 ```bash
-ocdw run "Research the best state management library for React in 2025" \
+oc-dw run "Research the best state management library for React in 2025" \
   --template deep-research \
   --adversarial-review
 ```
@@ -152,7 +152,7 @@ Skills apply reusable constraints to all worker tasks:
 Apply skills:
 
 ```bash
-ocdw run "Add OAuth2 login support" \
+oc-dw run "Add OAuth2 login support" \
   --skill security-first \
   --skill test-driven \
   --skill docs-required
@@ -216,7 +216,7 @@ Add the plugin to `opencode.json`:
 The plugin exposes a `dynamic_workflow_run` tool. You can also install a command:
 
 ```bash
-ocdw install-command --cwd .
+oc-dw install-command --cwd .
 ```
 
 Then run `/workflow <objective>` in OpenCode. The command asks the active agent to launch the plugin tool in the background.

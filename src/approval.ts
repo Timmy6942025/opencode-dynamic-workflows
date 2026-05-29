@@ -30,7 +30,7 @@ export async function requestApproval(
   await store.writeArtifact(
     state.id,
     "approval-request.md",
-    `# Workflow Approval Request\n\n${preview}\n\nTo approve, set the workflow status to "running" in state.json or use \\"ocdw approve ${state.id}\\".\n`,
+    `# Workflow Approval Request\n\n${preview}\n\nTo approve, set the workflow status to "running" in state.json or use \\"oc-dw approve ${state.id}\\".\n`,
   )
 
   // Poll for external approval by checking if state.status was changed from "plan_approval"
@@ -57,7 +57,7 @@ export async function requestApproval(
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
   }
 
-  throw new Error(`Workflow approval timed out after ${maxWaitMs}ms. Use "ocdw approve ${state.id}" to approve or "ocdw reject ${state.id}" to reject.`)
+  throw new Error(`Workflow approval timed out after ${maxWaitMs}ms. Use "oc-dw approve ${state.id}" to approve or "oc-dw reject ${state.id}" to reject.`)
 }
 
 export function formatPlanPreview(plan: WorkflowPlan, options: DynamicWorkflowOptions): string {

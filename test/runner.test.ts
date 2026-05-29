@@ -77,7 +77,7 @@ function samplePlan(): WorkflowPlan {
 }
 
 test("runner plans, executes DAG tasks, verifies, gates, and writes summary artifacts", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "ocdw-runner-"))
+  const cwd = await mkdtemp(join(tmpdir(), "oc-dw-runner-"))
   try {
     const plan = samplePlan()
     const client = new MockWorkflowClient(plan)
@@ -113,7 +113,7 @@ test("runner plans, executes DAG tasks, verifies, gates, and writes summary arti
 })
 
 test("dry run checkpoints the plan and resume completes it", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "ocdw-resume-"))
+  const cwd = await mkdtemp(join(tmpdir(), "oc-dw-resume-"))
   try {
     const client = new MockWorkflowClient(samplePlan())
     const store = new FileWorkflowStore(cwd)
