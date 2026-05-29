@@ -95,6 +95,25 @@ function computeNextRun(schedule: WorkflowSchedule): string | undefined {
     if (!intervalMs) return undefined
     return new Date(Date.now() + intervalMs).toISOString()
   }
-  // For cron, just add 1 minute as placeholder
-  return new Date(Date.now() + 60_000).toISOString()
+  return computeNextCronTime(schedule.expression)
+}
+
+function computeNextCronTime(expression: string): string | undefined {
+  const parts = expression.split(" ")
+  if (parts.length !== 5) return undefined
+  const [minuteField, hourField, dayField, monthField, weekdayField] = parts
+  let next = new Date(Date.now() + 60_000)
+  for (let i = 0; i < 366 * 24 * 60; i++) {
+    if (
+      matchCronField(minuteField, next.getMinutes()) &&
+      matchCronField(hourField, next.getHours()) &&
+      matchCronField(dayField, next.getDate()) &&
+      matchCronField(monthField, next.getMonth() + 1) &&
+      matchCronField(weekdayField, next.getDay())
+    ) {
+      return next.toISOString()
+    }
+    next = new Date(next.getTime() + 60_000)
+  }
+  return undefined
 }

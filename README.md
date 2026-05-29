@@ -6,25 +6,19 @@ This project lets OpenCode users launch high-effort workflows that **plan**, **f
 
 ## Install
 
-This project is not yet published to the npm registry. Install from source:
+This is a **source-only** project. It is not published to the npm registry and cannot be installed via `npm install -g opencode-dynamic-workflows`. Clone the repository, install development dependencies, and build locally:
 
 ```bash
 git clone https://github.com/Timmy6942025/opencode-dynamic-workflows.git
 cd opencode-dynamic-workflows
-npm install
+npm install   # installs local dev dependencies only
 npm run build
 ```
 
-Then either link the CLI globally:
+Then run it directly from the repo:
 
 ```bash
-npm link
-```
-
-Or run directly via `npx` from the repo:
-
-```bash
-npx . run "Audit every API route for missing auth checks and produce verified fixes" \
+node dist/cli.js run "Audit every API route for missing auth checks and produce verified fixes" \
   --cwd . \
   --concurrency 16 \
   --max-agents 200 \
@@ -32,6 +26,12 @@ npx . run "Audit every API route for missing auth checks and produce verified fi
   --worker-model anthropic/claude-sonnet-4-5 \
   --verifier-model google/gemini-3-pro \
   --synthesizer-model openai/gpt-5.1-codex
+```
+
+Or link it globally if you prefer:
+
+```bash
+npm link
 ```
 
 ## Quick Start

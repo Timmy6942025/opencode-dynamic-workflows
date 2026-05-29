@@ -81,8 +81,9 @@ export function truncate(value: string, maxChars: number): string {
 }
 
 export function chunkArray<T>(items: T[], size: number): T[][] {
+  const safeSize = Math.max(1, Math.floor(size))
   const chunks: T[][] = []
-  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size))
+  for (let i = 0; i < items.length; i += safeSize) chunks.push(items.slice(i, i + safeSize))
   return chunks
 }
 
@@ -116,7 +117,7 @@ export function jsonSchema(format: Record<string, unknown>, retryCount = 2): Jso
 }
 
 export function isModelRole(value: string): value is ModelRole {
-  return ["planner", "worker", "verifier", "synthesizer", "critic", "scout"].includes(value)
+  return ["planner", "worker", "verifier", "synthesizer", "critic", "scout", "adversary"].includes(value)
 }
 
 export function coerceStringArray(value: unknown): string[] {

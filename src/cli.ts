@@ -255,7 +255,8 @@ function buildOptions(objective: string, parsed: ParsedArgs): DynamicWorkflowOpt
   options.workflowName = getStringFlag(parsed, "workflow-name")
   options.useWorktree = Boolean(parsed.flags["use-worktree"])
   options.worktreeName = getStringFlag(parsed, "worktree-name")
-  options.tokenBudget = getNumberFlag(parsed, "token-budget", options.tokenBudget ?? 0) || undefined
+  const tokenBudget = getNumberFlag(parsed, "token-budget", -1)
+  if (tokenBudget >= 0) options.tokenBudget = tokenBudget
   options.contextOffloadThreshold = getNumberFlag(parsed, "context-offload-threshold", options.contextOffloadThreshold)
   options.progressReportIntervalMs = getNumberFlag(parsed, "progress-interval-ms", options.progressReportIntervalMs)
 
@@ -287,10 +288,35 @@ function buildResumeOptions(existing: WorkflowState, parsed: ParsedArgs): Dynami
   options.qualityGateTimeoutMs = getNumberFlag(parsed, "quality-gate-timeout-ms", options.qualityGateTimeoutMs)
   options.models = mergeModels(existing.options.models, parseModels(parsed))
 
+  options.stoppingCondition = getStringFlag(parsed, "stopping-condition") ?? options.stoppingCondition
+  const orchestrationMode = getStringFlag(parsed, "orchestration-mode")
+  if (orchestrationMode === "static" || orchestrationMode === "dynamic") {
+    options.orchestrationMode = orchestrationMode
+  }
+  const effortLevel = getStringFlag(parsed, "effort")
+  if (effortLevel === "low" || effortLevel === "medium" || effortLevel === "high" || effortLevel === "ultra") {
+    options.effortLevel = effortLevel
+  }
+  const permissionMode = getStringFlag(parsed, "permission-mode")
+  if (permissionMode === "full" || permissionMode === "plan" || permissionMode === "ask") {
+    options.permissionMode = permissionMode
+  }
   if (parsed.flags["require-approval"]) options.requireApproval = true
   if (parsed.flags["adversarial-review"]) options.adversarialReview = true
-  options.tokenBudget = getNumberFlag(parsed, "token-budget", options.tokenBudget ?? 0) || undefined
+  options.convergenceThreshold = getNumberFlag(parsed, "convergence-threshold", options.convergenceThreshold)
+  if (parsed.flags["generate-orchestration-script"]) options.generateOrchestrationScript = true
+  if (parsed.flags["save-workflow"]) options.saveWorkflow = true
+  options.workflowName = getStringFlag(parsed, "workflow-name") ?? options.workflowName
+  if (parsed.flags["use-worktree"]) options.useWorktree = true
+  options.worktreeName = getStringFlag(parsed, "worktree-name") ?? options.worktreeName
+  const tokenBudget = getNumberFlag(parsed, "token-budget", -1)
+  if (tokenBudget >= 0) options.tokenBudget = tokenBudget
+  options.contextOffloadThreshold = getNumberFlag(parsed, "context-offload-threshold", options.contextOffloadThreshold)
   options.progressReportIntervalMs = getNumberFlag(parsed, "progress-interval-ms", options.progressReportIntervalMs)
+  const template = getStringFlag(parsed, "template")
+  if (template) options.template = template
+  const skills = getArrayFlag(parsed, "skill")
+  if (skills.length) options.skills = skills
 
   return options
 }

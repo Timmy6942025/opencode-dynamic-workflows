@@ -83,8 +83,7 @@ export async function createDynamicPlan(client: WorkflowClient, options: Dynamic
     agent: "plan",
     format: jsonSchema(PLAN_SCHEMA, 3),
   })
-  const structured = result.structured as unknown
-  const plan = normalizePlan(structured, options)
+  const plan = normalizePlan(result.structured, options)
   if (plan.phases.length === 0) {
     return fallbackPlan(options)
   }

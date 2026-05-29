@@ -1,4 +1,4 @@
-import type { AgentTask, DynamicWorkflowOptions } from "./types.js"
+import type { AgentTask, DynamicWorkflowOptions, ModelRole } from "./types.js"
 
 export interface Skill {
   id: string
@@ -9,8 +9,6 @@ export interface Skill {
   promptSuffix: string
   appliesTo: ModelRole[]
 }
-
-type ModelRole = "planner" | "worker" | "verifier" | "synthesizer" | "critic" | "scout" | "adversary"
 
 const BUILT_IN_SKILLS: Skill[] = [
   {

@@ -78,53 +78,58 @@ export class DynamicWorkflowRunner {
       if (options.requireApproval) {
         const approval = await requestApproval(state, plan, options, this.reporter, this.store)
         if (approval === "rejected") {
-          state = await this.store.load(state.id)
-          state.status = "aborted"
-          await this.store.save(state)
-          return state
+          await this.store.mutateState(state.id, (s) => { s.status = "aborted" })
+          return await this.store.load(state.id)
         }
         state = await this.store.load(state.id)
       }
     }
 
     if (options.dryRun) {
-      state.status = "paused"
-      await this.store.save(state)
-      return state
+      await this.store.mutateState(state.id, (s) => { s.status = "paused" })
+      return await this.store.load(state.id)
     }
 
     // Worktree setup
     if (options.useWorktree && options.worktreeName) {
       const worktreePath = await createWorktree(state.cwd, options.worktreeName, this.reporter)
-      state.worktreePath = worktreePath
-      state.cwd = worktreePath
-      await this.store.save(state)
+      await this.store.mutateState(state.id, (s) => {
+        s.worktreePath = worktreePath
+        s.cwd = worktreePath
+      })
     }
 
-    state.status = "running"
-    await this.store.save(state)
+    await this.store.mutateState(state.id, (s) => { s.status = "running" })
 
-    // Progress report timer
-    let progressTimer: ReturnType<typeof setInterval> | undefined
-    if (options.progressReportIntervalMs > 0) {
-      progressTimer = setInterval(async () => {
+    // Progress report timer (recursive setTimeout to avoid overlapping calls)
+    let progressTimerActive = false
+    let progressTimerTimeout: ReturnType<typeof setTimeout> | undefined
+    const scheduleProgressReport = () => {
+      if (options.progressReportIntervalMs <= 0) return
+      progressTimerTimeout = setTimeout(async () => {
+        if (progressTimerActive) return
+        progressTimerActive = true
         try {
           const current = await this.store.load(state.id)
           if (current.status !== "running") return
           const report = await generateProgressReport(this.client, current, options)
-          current.progressReports.push(report)
-          await this.store.save(current)
+          await this.store.mutateState(state.id, (s) => { s.progressReports.push(report) })
           await this.store.saveProgressReport(state.id, report)
           this.reporter.progress?.(report)
           if (current.progressReports.length % 3 === 0) {
-            const summary = await synthesizeProgressReport(this.client, current, options)
-            await this.store.writeArtifact(state.id, `progress-${report.checkpoint}.md`, summary)
+            const { text, tokensUsed } = await synthesizeProgressReport(this.client, current, options)
+            await this.store.writeArtifact(state.id, `progress-${report.checkpoint}.md`, text)
+            await this.accumulateTokens(state.id, tokensUsed)
           }
-        } catch {
-          // Best-effort progress reporting
+        } catch (error) {
+          this.reporter.warn("Progress report failed", { error: toErrorMessage(error) })
+        } finally {
+          progressTimerActive = false
+          scheduleProgressReport()
         }
       }, options.progressReportIntervalMs)
     }
+    scheduleProgressReport()
 
     const plan = state.plan
     if (!plan) throw new Error("Workflow has no plan after planning step.")
@@ -145,34 +150,39 @@ export class DynamicWorkflowRunner {
 
       state = await this.store.load(state.id)
       if (state.status === "aborted" || state.status === "paused") {
-        if (progressTimer) clearInterval(progressTimer)
+        if (progressTimerTimeout) clearTimeout(progressTimerTimeout)
         return state
       }
 
       const failedTasks = Object.values(state.tasks).filter((task) => task.status === "failed")
       const failedPhases = Object.values(state.phases).filter((phase) => phase.status === "failed")
       if (failedTasks.length || failedPhases.length) {
-        state.status = "failed"
-        state.error = `${failedTasks.length} task(s) and ${failedPhases.length} phase(s) failed.`
-        await this.store.save(state)
-        if (progressTimer) clearInterval(progressTimer)
-        return state
+        await this.store.mutateState(state.id, (s) => {
+          s.status = "failed"
+          s.error = `${failedTasks.length} task(s) and ${failedPhases.length} phase(s) failed.`
+        })
+        if (progressTimerTimeout) clearTimeout(progressTimerTimeout)
+        return await this.store.load(state.id)
       }
 
       const summary = await this.synthesize(state, options)
-      state = await this.store.load(state.id)
-      state.summary = summary
-      state.summaryPath = await this.store.writeArtifact(state.id, "summary.md", summary)
-      state.status = "completed"
-      await this.store.save(state)
-      await this.event(state.id, "workflow.completed", "Workflow completed", { summaryPath: state.summaryPath })
-      if (progressTimer) clearInterval(progressTimer)
+      const summaryPath = await this.store.writeArtifact(state.id, "summary.md", summary)
+      await this.store.mutateState(state.id, (s) => {
+        s.summary = summary
+        s.summaryPath = summaryPath
+        s.status = "completed"
+      })
+      const completedState = await this.store.load(state.id)
+      await this.event(state.id, "workflow.completed", "Workflow completed", { summaryPath: completedState.summaryPath })
+      if (progressTimerTimeout) clearTimeout(progressTimerTimeout)
 
       // Save workflow template if requested
       if (options.saveWorkflow && options.workflowName) {
-        state.isTemplate = true
-        state.templateName = options.workflowName
-        await this.store.saveWorkflowTemplate(state.id, options.workflowName, state)
+        await this.store.mutateState(state.id, (s) => {
+          s.isTemplate = true
+          s.templateName = options.workflowName
+        })
+        await this.store.saveWorkflowTemplate(state.id, options.workflowName!, completedState)
       }
 
       // Cleanup worktree if used
@@ -180,16 +190,19 @@ export class DynamicWorkflowRunner {
         await cleanupWorktree(options.cwd, options.worktreeName, this.reporter)
       }
 
-      return state
+      return completedState
     } catch (error) {
+      const errorMessage = toErrorMessage(error)
       state = await this.store.load(state.id)
-      state.status = "failed"
-      state.error = toErrorMessage(error)
-      await this.store.save(state)
-      await this.event(state.id, "workflow.failed", state.error)
-      this.reporter.error("Workflow failed", { workflowId: state.id, error: state.error })
-      if (progressTimer) clearInterval(progressTimer)
-      return state
+      await this.store.mutateState(state.id, (s) => {
+        s.status = "failed"
+        s.error = errorMessage
+      })
+      const failedState = await this.store.load(state.id)
+      await this.event(state.id, "workflow.failed", errorMessage)
+      this.reporter.error("Workflow failed", { workflowId: state.id, error: errorMessage })
+      if (progressTimerTimeout) clearTimeout(progressTimerTimeout)
+      return failedState
     }
   }
 
@@ -215,34 +228,36 @@ export class DynamicWorkflowRunner {
     if (existing?.status === "completed") return
     this.ensurePhaseDependenciesComplete(state, phase)
 
-    const phaseState: PhaseRunState = existing ?? { phaseId: phase.id, status: "pending", gateResults: [] }
-    phaseState.status = "running"
-    phaseState.startedAt ??= nowIso()
-    state.phases[phase.id] = phaseState
-    await this.store.save(state)
+    await this.store.mutateState(state.id, (s) => {
+      const phaseState: PhaseRunState = s.phases[phase.id] ?? { phaseId: phase.id, status: "pending", gateResults: [], tokensUsed: 0 }
+      phaseState.status = "running"
+      phaseState.startedAt ??= nowIso()
+      s.phases[phase.id] = phaseState
+    })
     await this.event(state.id, "phase.started", `Started phase ${phase.title}`, { phaseId: phase.id, tasks: phase.tasks.length })
     this.reporter.info(`Phase: ${phase.title}`, { phaseId: phase.id, tasks: phase.tasks.length })
 
     await this.runPhaseTasksWithDependencies(state, phase, options)
 
-    state = await this.store.load(state.id)
-    const phaseTasks = phase.tasks.map((task) => state.tasks[task.id]).filter(Boolean)
+    const latest = await this.store.load(state.id)
+    const phaseTasks = phase.tasks.map((task) => latest.tasks[task.id]).filter(Boolean)
     const failed = phaseTasks.filter((task) => task.status === "failed")
     if (failed.length > 0 && options.failFast) {
-      state.phases[phase.id].status = "failed"
-      state.phases[phase.id].error = `${failed.length} task(s) failed.`
-      await this.store.save(state)
+      await this.store.mutateState(state.id, (s) => {
+        s.phases[phase.id].status = "failed"
+        s.phases[phase.id].error = `${failed.length} task(s) failed.`
+      })
       return
     }
 
     const gateResults = await this.runQualityGates(state, phase, options)
-    state = await this.store.load(state.id)
-    state.phases[phase.id].gateResults = gateResults
     const gateFailed = gateResults.some((gate) => gate.exitCode !== 0)
-    state.phases[phase.id].status = gateFailed ? "failed" : "completed"
-    state.phases[phase.id].completedAt = nowIso()
-    if (gateFailed) state.phases[phase.id].error = "One or more quality gates failed."
-    await this.store.save(state)
+    await this.store.mutateState(state.id, (s) => {
+      s.phases[phase.id].gateResults = gateResults
+      s.phases[phase.id].status = gateFailed ? "failed" : "completed"
+      s.phases[phase.id].completedAt = nowIso()
+      if (gateFailed) s.phases[phase.id].error = "One or more quality gates failed."
+    })
     await this.event(state.id, gateFailed ? "phase.failed" : "phase.completed", `${gateFailed ? "Failed" : "Completed"} phase ${phase.title}`, {
       phaseId: phase.id,
       gates: gateResults.length,
@@ -375,10 +390,11 @@ export class DynamicWorkflowRunner {
     try {
       const sessionId = await this.client.createSession(`dw:${state.id}:${task.id}:attempt-${attemptNumber}`)
       attempt.sessionId = sessionId
-      state.sessions.push(sessionId)
-      state.tasks[task.id].status = "running"
-      state.tasks[task.id].updatedAt = nowIso()
-      await this.store.save(state)
+      await this.store.mutateState(state.id, (s) => {
+        s.sessions.push(sessionId)
+        s.tasks[task.id].status = "running"
+        s.tasks[task.id].updatedAt = nowIso()
+      })
       await this.client.initSession(sessionId)
       const model = resolveModel(task.role, task, options.models)
       attempt.model = model
@@ -400,9 +416,10 @@ export class DynamicWorkflowRunner {
       if (options.cleanUpSessions) await this.client.deleteSession(sessionId)
       return attempt
     } catch (error) {
-      attempt.error = toErrorMessage(error)
+      const errorMessage = toErrorMessage(error)
+      attempt.error = errorMessage
       attempt.completedAt = nowIso()
-      await this.event(state.id, "task.attempt.failed", attempt.error, { taskId: task.id, attempt: attemptNumber })
+      await this.event(state.id, "task.attempt.failed", errorMessage, { taskId: task.id, attempt: attemptNumber })
       return attempt
     }
   }
@@ -415,9 +432,7 @@ export class DynamicWorkflowRunner {
     options: DynamicWorkflowOptions,
   ): Promise<VerificationResult> {
     const sessionId = await this.client.createSession(`dw:${workflowId}:${task.id}:verify`)
-    const state = await this.store.load(workflowId)
-    state.sessions.push(sessionId)
-    await this.store.save(state)
+    await this.store.mutateState(workflowId, (state) => { state.sessions.push(sessionId) })
     await this.client.initSession(sessionId)
     const model = resolveModel("verifier", undefined, options.models)
     const result = await this.client.prompt(sessionId, buildVerifierPrompt(phase, task, output), {
@@ -445,8 +460,7 @@ export class DynamicWorkflowRunner {
     if (gates.length === 0) return []
     const results: ShellResult[] = []
     const sessionId = await this.client.createSession(`dw:${state.id}:${phase.id}:quality-gates`)
-    state.sessions.push(sessionId)
-    await this.store.save(state)
+    await this.store.mutateState(state.id, (s) => { s.sessions.push(sessionId) })
     await this.client.initSession(sessionId)
     let gateTokens = 0
     for (const command of gates) {
@@ -460,11 +474,11 @@ export class DynamicWorkflowRunner {
       if (result.exitCode !== 0 && options.failFast) break
     }
     await this.accumulateTokens(state.id, gateTokens)
-    const latest = await this.store.load(state.id)
-    if (latest.phases[phase.id]) {
-      latest.phases[phase.id].tokensUsed = gateTokens
-      await this.store.save(latest)
-    }
+    await this.store.mutateState(state.id, (s) => {
+      if (s.phases[phase.id]) {
+        s.phases[phase.id].tokensUsed = gateTokens
+      }
+    })
     if (options.cleanUpSessions) await this.client.deleteSession(sessionId)
     return results
   }

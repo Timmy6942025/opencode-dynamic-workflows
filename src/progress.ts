@@ -33,9 +33,6 @@ export async function generateProgressReport(
     if (phase.status === "failed" && phase.error) blockers.push(phase.error)
   }
 
-  const totalTokens = taskStates.reduce((sum, t) => sum + t.tokensUsed, 0)
-    + phaseStates.reduce((sum, p) => sum + p.tokensUsed, 0)
-
   const report: ProgressReport = {
     checkpoint: checkpoint ?? `checkpoint-${Date.now()}`,
     time: nowIso(),
@@ -48,7 +45,7 @@ export async function generateProgressReport(
     verifiedEvidence,
     remainingWork,
     blockers,
-    tokensUsed: totalTokens,
+    tokensUsed: state.totalTokensUsed,
   }
 
   return report
@@ -58,7 +55,7 @@ export async function synthesizeProgressReport(
   client: WorkflowClient,
   state: WorkflowState,
   options: DynamicWorkflowOptions,
-): Promise<string> {
+): Promise<{ text: string; tokensUsed: number }> {
   const sessionId = await client.createSession(`dw:${state.id}:progress-report`)
   try {
     await client.initSession(sessionId)
@@ -92,12 +89,13 @@ export async function synthesizeProgressReport(
     ].join("\n")
 
     const result = await client.prompt(sessionId, prompt, { model, agent: "plan" })
+    const tokensUsed = Math.ceil(result.text.length / 4)
     if (options.cleanUpSessions) await client.deleteSession(sessionId)
-    return result.text
+    return { text: result.text, tokensUsed }
   } catch {
     if (options.cleanUpSessions) {
       try { await client.deleteSession(sessionId) } catch {}
     }
-    return `Progress: ${Object.values(state.tasks).filter((t) => t.status === "completed").length}/${Object.values(state.tasks).length} tasks completed.`
+    return { text: `Progress: ${Object.values(state.tasks).filter((t) => t.status === "completed").length}/${Object.values(state.tasks).length} tasks completed.`, tokensUsed: 0 }
   }
 }

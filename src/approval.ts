@@ -1,3 +1,5 @@
+import { stat } from "node:fs/promises"
+
 import type { DynamicWorkflowOptions, Reporter, WorkflowPlan, WorkflowState } from "./types.js"
 import { FileWorkflowStore } from "./state.js"
 import { nowIso } from "./util.js"
@@ -33,10 +35,21 @@ export async function requestApproval(
 
   // Poll for external approval by checking if state.status was changed from "plan_approval"
   const maxWaitMs = 300_000 // 5 minute timeout
-  const pollIntervalMs = 2_000
+  const pollIntervalMs = 5_000
   const start = Date.now()
+  let lastMtime = 0
 
   while (Date.now() - start < maxWaitMs) {
+    try {
+      const s = await stat(store.statePath(state.id))
+      if (s.mtimeMs <= lastMtime) {
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
+        continue
+      }
+      lastMtime = s.mtimeMs
+    } catch {
+      // state file not readable yet
+    }
     const current = await store.load(state.id)
     if (current.status === "running") return "approved"
     if (current.status === "aborted") return "rejected"

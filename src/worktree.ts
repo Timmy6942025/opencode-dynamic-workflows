@@ -6,7 +6,7 @@ import type { Reporter } from "./types.js"
 
 export async function createWorktree(cwd: string, name: string, reporter?: Reporter): Promise<string> {
   const worktreePath = join(resolve(cwd), `.opencode-worktrees/${name}`)
-  await mkdir(worktreePath, { recursive: true })
+  await mkdir(join(resolve(cwd), ".opencode-worktrees"), { recursive: true })
 
   try {
     // Check if worktree already exists

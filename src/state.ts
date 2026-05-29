@@ -13,9 +13,35 @@ import { createWorkflowId, nowIso, slugify } from "./util.js"
 
 export class FileWorkflowStore {
   readonly root: string
+  private locks = new Map<string, Promise<void>>()
 
   constructor(cwd: string) {
     this.root = join(resolve(cwd), ".opencode", "dynamic-workflows")
+  }
+
+  private async acquireLock(workflowId: string): Promise<() => void> {
+    while (this.locks.has(workflowId)) {
+      await this.locks.get(workflowId)
+    }
+    let release!: () => void
+    const promise = new Promise<void>((resolve) => { release = resolve })
+    this.locks.set(workflowId, promise)
+    return () => {
+      this.locks.delete(workflowId)
+      release()
+    }
+  }
+
+  async mutateState(workflowId: string, mutator: (state: WorkflowState) => void): Promise<WorkflowState> {
+    const release = await this.acquireLock(workflowId)
+    try {
+      const state = await this.load(workflowId)
+      mutator(state)
+      await this.save(state)
+      return state
+    } finally {
+      release()
+    }
   }
 
   workflowsDir(): string {

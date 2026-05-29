@@ -100,7 +100,7 @@ function buildAdversaryPrompt(role: ModelRole, phase: WorkflowPhase, task: Agent
 
 function evaluateConvergence(reviews: AdversarialReview[], threshold: number): ConvergenceResult {
   if (reviews.length === 0) {
-    return { converged: true, consensusConfidence: 1, reviews: [], finalVerdict: "accept", iterations: 0 }
+    return { converged: false, consensusConfidence: 0, reviews: [], finalVerdict: "needs_work", iterations: 0 }
   }
 
   const refutes = reviews.filter((r) => r.verdict === "refute")
