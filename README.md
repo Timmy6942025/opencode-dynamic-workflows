@@ -1,40 +1,34 @@
-# opencode-dynamic-workflows
+# ocdw — OpenCode Dynamic Workflows
 
-Model-agnostic dynamic workflow orchestration for OpenCode. Inspired by Claude Dynamic Workflows and OpenAI Codex `/goal`.
+Seamless dynamic workflow orchestration for OpenCode. One command, zero config.
 
-This project lets OpenCode users launch high-effort workflows that **plan**, **fan out**, **coordinate**, **verify**, **resume**, and **summarize** many OpenCode subagent sessions across a codebase. It is intentionally provider neutral: every model is an OpenCode `provider/model` id, so routing can use Claude, GPT, Gemini, Kimi, DeepSeek, Grok, local models, or any other provider configured in OpenCode.
+Inspired by Claude Dynamic Workflows and OpenAI Codex `/goal`, `ocdw` lets OpenCode users launch high-effort workflows that **plan**, **fan out**, **coordinate**, **verify**, **resume**, and **summarize** many OpenCode subagent sessions across a codebase. Every model is an OpenCode `provider/model` id — use Claude, GPT, Gemini, Kimi, DeepSeek, Grok, local models, or any provider configured in OpenCode.
 
 ## Install
 
-This is a **source-only** project. It is not published to the npm registry and cannot be installed via `npm install -g opencode-dynamic-workflows`. Clone the repository, install development dependencies, and build locally:
-
 ```bash
-git clone https://github.com/Timmy6942025/opencode-dynamic-workflows.git
-cd opencode-dynamic-workflows
-npm install   # installs local dev dependencies only
-npm run build
+npm i -g ocdw
 ```
 
-Then run it directly from the repo:
+That's it. The CLI `ocdw` is now available globally, and the OpenCode plugin is ready to configure.
+
+### Zero-Config Plugin Setup
 
 ```bash
-node dist/cli.js run "Audit every API route for missing auth checks and produce verified fixes" \
-  --cwd . \
-  --concurrency 16 \
-  --max-agents 200 \
-  --planner-model openai/gpt-5.1-codex \
-  --worker-model anthropic/claude-sonnet-4-5 \
-  --verifier-model google/gemini-3-pro \
-  --synthesizer-model openai/gpt-5.1-codex
+ocdw setup
 ```
 
-Or link it globally if you prefer:
+This adds `ocdw` to your OpenCode config. Restart OpenCode and the `dynamic_workflow_run` tool is available automatically. No `opencode.json` editing required.
+
+### Quick Start
 
 ```bash
-npm link
+ocdw run "Refactor the auth layer to use JWT tokens instead of sessions" \
+  --concurrency 8 \
+  --max-agents 50
 ```
 
-## Quick Start
+## Usage
 
 Run OpenCode's server/TUI in the project you want to operate on, then launch a workflow:
 

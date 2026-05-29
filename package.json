@@ -1,22 +1,26 @@
 {
-  "name": "opencode-dynamic-workflows",
+  "name": "ocdw",
   "version": "0.1.0",
-  "description": "Model-agnostic dynamic workflow orchestration for OpenCode.",
+  "description": "Seamless dynamic workflow orchestration for OpenCode. One command, zero config.",
   "type": "module",
+  "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
   "license": "MIT",
   "bin": {
-    "ocdw": "./dist/src/cli.js",
-    "opencode-dynamic-workflows": "./dist/src/cli.js"
+    "ocdw": "./dist/src/cli.js"
   },
   "exports": {
-    ".": "./dist/src/index.js",
-    "./plugin": "./dist/src/plugin.js"
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./plugin": {
+      "types": "./dist/src/plugin.d.ts",
+      "import": "./dist/src/plugin.js"
+    }
   },
   "files": [
     "dist/src",
-    "docs",
-    "examples",
     "README.md",
     "LICENSE"
   ],
@@ -28,14 +32,32 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "latest",
-    "@opencode-ai/sdk": "latest"
+    "@opencode-ai/plugin": "^1.15.12",
+    "@opencode-ai/sdk": "^1.15.12"
   },
   "devDependencies": {
-    "@types/node": "latest",
-    "typescript": "latest"
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
   },
   "engines": {
     "node": ">=20"
-  }
+  },
+  "keywords": [
+    "opencode",
+    "dynamic-workflows",
+    "claude-code",
+    "ai",
+    "orchestration",
+    "multi-agent",
+    "plugin"
+  ],
+  "author": "Timmy6942025",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Timmy6942025/opencode-dynamic-workflows.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Timmy6942025/opencode-dynamic-workflows/issues"
+  },
+  "homepage": "https://github.com/Timmy6942025/opencode-dynamic-workflows#readme"
 }

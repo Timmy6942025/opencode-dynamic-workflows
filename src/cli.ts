@@ -3,7 +3,7 @@ import { existsSync } from "node:fs"
 import { resolve } from "node:path"
 
 import { createWorkflowClient } from "./client.js"
-import { installWorkflowCommand } from "./install.js"
+import { installWorkflowCommand, setupOpenCodePlugin } from "./install.js"
 import { parseModelFlag } from "./model-router.js"
 import { defaultWorkflowOptions, mergeModels, optionsFromState } from "./options.js"
 import { ConsoleReporter } from "./reporter.js"
@@ -55,6 +55,9 @@ async function main(argv: string[]): Promise<void> {
       break
     case "install-command":
       await installCommand(parsed)
+      break
+    case "setup":
+      await setupCommand(parsed)
       break
     case "help":
     default:
@@ -204,6 +207,18 @@ async function installCommand(parsed: ParsedArgs): Promise<void> {
   const path = await installWorkflowCommand(cwd, Boolean(parsed.flags.global))
   if (parsed.flags.json) process.stdout.write(`${JSON.stringify({ path }, null, 2)}\n`)
   else process.stdout.write(`Installed OpenCode /workflow command at ${path}\n`)
+}
+
+async function setupCommand(parsed: ParsedArgs): Promise<void> {
+  const cwd = resolve(getStringFlag(parsed, "cwd") ?? process.cwd())
+  const global = Boolean(parsed.flags.global)
+  const configPath = await setupOpenCodePlugin(cwd, global)
+  if (parsed.flags.json) {
+    process.stdout.write(`${JSON.stringify({ configPath, plugin: "ocdw" }, null, 2)}\n`)
+    return
+  }
+  process.stdout.write(`OpenCode plugin configured at ${configPath}\n`)
+  process.stdout.write(`Plugin "ocdw" added. Restart OpenCode to load the dynamic workflows plugin.\n`)
 }
 
 async function createRunner(options: DynamicWorkflowOptions, json: boolean) {
@@ -428,6 +443,7 @@ Usage:
   ocdw skills [--json]
   ocdw dashboard [workflow-id] [--cwd .]
   ocdw install-command [--cwd .] [--global]
+  ocdw setup [--global]
 
 Options:
   --cwd <path>                      Project directory
