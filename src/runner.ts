@@ -16,6 +16,11 @@ import { createDynamicPlan } from "./planner.js"
 import { FileWorkflowStore, initializePlanState } from "./state.js"
 import { chunkArray, jsonSchema, mapLimit, nowIso, toErrorMessage, truncate } from "./util.js"
 import { SilentReporter } from "./reporter.js"
+import { runAdversarialReview } from "./adversarial.js"
+import { generateProgressReport, synthesizeProgressReport } from "./progress.js"
+import { applySkillsToTask, resolveSkills } from "./skills.js"
+import { requestApproval } from "./approval.js"
+import { createWorktree, cleanupWorktree } from "./worktree.js"
 
 const VERIFICATION_SCHEMA = {
   type: "object",
@@ -45,14 +50,41 @@ export class DynamicWorkflowRunner {
       this.reporter.info("Planning workflow", { workflowId: state.id })
       state.status = "planning"
       await this.store.save(state)
+
+      // Apply template if specified
+      if (options.template) {
+        const { resolveTemplate, applyTemplate } = await import("./templates.js")
+        const template = resolveTemplate(options.template)
+        if (template) {
+          this.reporter.info(`Applying workflow template: ${template.name}`, { templateId: template.id })
+          options = applyTemplate(template, options)
+        }
+      }
+
       const plan = await createDynamicPlan(this.client, options)
       initializePlanState(state, plan)
       await this.store.writeArtifact(state.id, "plan.json", `${JSON.stringify(plan, null, 2)}\n`)
+      if (plan.orchestrationScript) {
+        await this.store.writeArtifact(state.id, "orchestration.ts", plan.orchestrationScript)
+      }
       await this.event(state.id, "workflow.planned", "Workflow plan created", {
         phases: plan.phases.length,
         tasks: Object.keys(state.tasks).length,
+        estimatedTokens: plan.estimatedTokens,
       })
       await this.store.save(state)
+
+      // Approval gate
+      if (options.requireApproval) {
+        const approval = await requestApproval(state, plan, options, this.reporter, this.store)
+        if (approval === "rejected") {
+          state = await this.store.load(state.id)
+          state.status = "aborted"
+          await this.store.save(state)
+          return state
+        }
+        state = await this.store.load(state.id)
+      }
     }
 
     if (options.dryRun) {
@@ -61,8 +93,38 @@ export class DynamicWorkflowRunner {
       return state
     }
 
+    // Worktree setup
+    if (options.useWorktree && options.worktreeName) {
+      const worktreePath = await createWorktree(state.cwd, options.worktreeName, this.reporter)
+      state.worktreePath = worktreePath
+      state.cwd = worktreePath
+      await this.store.save(state)
+    }
+
     state.status = "running"
     await this.store.save(state)
+
+    // Progress report timer
+    let progressTimer: ReturnType<typeof setInterval> | undefined
+    if (options.progressReportIntervalMs > 0) {
+      progressTimer = setInterval(async () => {
+        try {
+          const current = await this.store.load(state.id)
+          if (current.status !== "running") return
+          const report = await generateProgressReport(this.client, current, options)
+          current.progressReports.push(report)
+          await this.store.save(current)
+          await this.store.saveProgressReport(state.id, report)
+          this.reporter.progress?.(report)
+          if (current.progressReports.length % 3 === 0) {
+            const summary = await synthesizeProgressReport(this.client, current, options)
+            await this.store.writeArtifact(state.id, `progress-${report.checkpoint}.md`, summary)
+          }
+        } catch {
+          // Best-effort progress reporting
+        }
+      }, options.progressReportIntervalMs)
+    }
 
     const plan = state.plan
     if (!plan) throw new Error("Workflow has no plan after planning step.")
@@ -71,12 +133,21 @@ export class DynamicWorkflowRunner {
       for (const phase of plan.phases) {
         state = await this.refreshControlState(state)
         if (state.status === "paused" || state.status === "aborted") break
+
+        // Permission mode: plan approval per phase
+        if (options.permissionMode === "plan") {
+          this.reporter.info(`Phase ${phase.title} awaiting plan-mode approval`, { phaseId: phase.id })
+        }
+
         await this.runPhase(state, phase, options)
         state = await this.store.load(state.id)
       }
 
       state = await this.store.load(state.id)
-      if (state.status === "aborted" || state.status === "paused") return state
+      if (state.status === "aborted" || state.status === "paused") {
+        if (progressTimer) clearInterval(progressTimer)
+        return state
+      }
 
       const failedTasks = Object.values(state.tasks).filter((task) => task.status === "failed")
       const failedPhases = Object.values(state.phases).filter((phase) => phase.status === "failed")
@@ -84,6 +155,7 @@ export class DynamicWorkflowRunner {
         state.status = "failed"
         state.error = `${failedTasks.length} task(s) and ${failedPhases.length} phase(s) failed.`
         await this.store.save(state)
+        if (progressTimer) clearInterval(progressTimer)
         return state
       }
 
@@ -94,6 +166,20 @@ export class DynamicWorkflowRunner {
       state.status = "completed"
       await this.store.save(state)
       await this.event(state.id, "workflow.completed", "Workflow completed", { summaryPath: state.summaryPath })
+      if (progressTimer) clearInterval(progressTimer)
+
+      // Save workflow template if requested
+      if (options.saveWorkflow && options.workflowName) {
+        state.isTemplate = true
+        state.templateName = options.workflowName
+        await this.store.saveWorkflowTemplate(state.id, options.workflowName, state)
+      }
+
+      // Cleanup worktree if used
+      if (options.useWorktree && options.worktreeName) {
+        await cleanupWorktree(options.cwd, options.worktreeName, this.reporter)
+      }
+
       return state
     } catch (error) {
       state = await this.store.load(state.id)
@@ -102,6 +188,7 @@ export class DynamicWorkflowRunner {
       await this.store.save(state)
       await this.event(state.id, "workflow.failed", state.error)
       this.reporter.error("Workflow failed", { workflowId: state.id, error: state.error })
+      if (progressTimer) clearInterval(progressTimer)
       return state
     }
   }
@@ -221,10 +308,14 @@ export class DynamicWorkflowRunner {
     if (this.isTaskComplete(taskState)) return taskState
     this.ensureTaskDependenciesComplete(state, task)
 
+    // Apply skills/constraints to the task before execution
+    const skills = resolveSkills(options.skills)
+    const skilledTask = skills.length > 0 ? applySkillsToTask(task, skills, task.role) : task
+
     let followUp = ""
     const maxAttempts = Math.max(1, options.retryLimit + 1)
     for (let attemptNumber = taskState.attempts.length + 1; attemptNumber <= maxAttempts; attemptNumber++) {
-      const attempt = await this.runWorkerAttempt(state, phase, task, options, attemptNumber, followUp)
+      const attempt = await this.runWorkerAttempt(state, phase, skilledTask, options, attemptNumber, followUp)
       taskState = await this.recordAttempt(state.id, task.id, attempt)
 
       if (attempt.error) {
@@ -237,8 +328,24 @@ export class DynamicWorkflowRunner {
         return this.completeTask(state.id, task.id, attempt.output ?? "", undefined)
       }
 
-      const verification = await this.verifyTask(state.id, phase, task, attempt.output ?? "", options)
+      const verification = await this.verifyTask(state.id, phase, skilledTask, attempt.output ?? "", options)
       taskState = await this.attachVerification(state.id, task.id, verification)
+
+      // Adversarial review
+      if (options.adversarialReview) {
+        const convergence = await runAdversarialReview(
+          this.client, phase, skilledTask, attempt.output ?? "", verification, options,
+        )
+        taskState = await this.attachConvergence(state.id, task.id, convergence)
+        if (!convergence.converged || convergence.finalVerdict === "reject") {
+          const followUp = `Adversarial review rejected this work. Issues: ${convergence.reviews.flatMap((r) => r.issues).join("; ")}`
+          if (attemptNumber >= maxAttempts) {
+            return this.failTask(state.id, task.id, `Adversarial review failed: ${followUp}`)
+          }
+          continue
+        }
+      }
+
       if (verification.pass) {
         return this.completeTask(state.id, task.id, attempt.output ?? "", verification)
       }
@@ -264,7 +371,7 @@ export class DynamicWorkflowRunner {
     followUp: string,
   ): Promise<TaskAttempt> {
     const startedAt = nowIso()
-    const attempt: TaskAttempt = { attempt: attemptNumber, startedAt }
+    const attempt: TaskAttempt = { attempt: attemptNumber, startedAt, tokensUsed: 0 }
     try {
       const sessionId = await this.client.createSession(`dw:${state.id}:${task.id}:attempt-${attemptNumber}`)
       attempt.sessionId = sessionId
@@ -281,11 +388,14 @@ export class DynamicWorkflowRunner {
         agent: task.canEdit ? "build" : "explore",
       })
       attempt.output = result.text
+      attempt.tokensUsed = estimateTokens(result.text) ?? 0
       attempt.completedAt = nowIso()
+      await this.accumulateTokens(state.id, attempt.tokensUsed)
       await this.event(state.id, "task.attempt.completed", `Completed ${task.id} attempt ${attemptNumber}`, {
         taskId: task.id,
         sessionId,
         model,
+        tokensUsed: attempt.tokensUsed,
       })
       if (options.cleanUpSessions) await this.client.deleteSession(sessionId)
       return attempt
@@ -315,13 +425,17 @@ export class DynamicWorkflowRunner {
       agent: "plan",
       format: jsonSchema(VERIFICATION_SCHEMA, 2),
     })
+    const tokensUsed = estimateTokens(result.text)
+    await this.accumulateTokens(workflowId, tokensUsed)
     if (options.cleanUpSessions) await this.client.deleteSession(sessionId)
     const structured = result.structured as Record<string, unknown> | undefined
     const verification = coerceVerification(structured, result.text)
+    verification.tokensUsed = tokensUsed
     await this.event(workflowId, "task.verified", `Verified ${task.id}`, {
       taskId: task.id,
       pass: verification.pass,
       confidence: verification.confidence,
+      tokensUsed,
     })
     return verification
   }
@@ -334,17 +448,43 @@ export class DynamicWorkflowRunner {
     state.sessions.push(sessionId)
     await this.store.save(state)
     await this.client.initSession(sessionId)
+    let gateTokens = 0
     for (const command of gates) {
       const result = await this.client.shell(sessionId, command, options.qualityGateTimeoutMs)
       results.push(result)
+      gateTokens += estimateTokens(result.stdout + result.stderr)
       await this.event(state.id, "quality-gate.completed", `Quality gate completed: ${command}`, {
         phaseId: phase.id,
         exitCode: result.exitCode,
       })
       if (result.exitCode !== 0 && options.failFast) break
     }
+    await this.accumulateTokens(state.id, gateTokens)
+    const latest = await this.store.load(state.id)
+    if (latest.phases[phase.id]) {
+      latest.phases[phase.id].tokensUsed = gateTokens
+      await this.store.save(latest)
+    }
     if (options.cleanUpSessions) await this.client.deleteSession(sessionId)
     return results
+  }
+
+  private async accumulateTokens(workflowId: string, tokens: number): Promise<void> {
+    const safeTokens = Number.isFinite(tokens) && tokens >= 0 ? tokens : 0
+    const state = await this.store.load(workflowId)
+    state.totalTokensUsed += safeTokens
+    await this.store.save(state)
+  }
+
+  private async attachConvergence(workflowId: string, taskId: string, convergence: import("./types.js").ConvergenceResult): Promise<TaskRunState> {
+    const state = await this.store.load(workflowId)
+    const taskState = state.tasks[taskId]
+    taskState.convergence = convergence
+    taskState.adversarialReviews = convergence.reviews
+    taskState.updatedAt = nowIso()
+    state.convergenceResults[taskId] = convergence
+    await this.store.save(state)
+    return taskState
   }
 
   private async synthesize(state: WorkflowState, options: DynamicWorkflowOptions): Promise<string> {
@@ -361,9 +501,26 @@ export class DynamicWorkflowRunner {
       ].join("\n")
     })
 
-    const total = inputs.join("\n\n").length
-    const chunkSize = total > options.maxSummaryInputChars ? 12 : Math.max(1, inputs.length)
-    const chunks = chunkArray(inputs, chunkSize)
+    let total = inputs.join("\n\n").length
+
+    // Context offloading: if total exceeds threshold, offload intermediate results to cache
+    let synthesisInputs = inputs
+    if (total > options.contextOffloadThreshold && inputs.length > 1) {
+      const offloadKey = `synthesis-context-${state.id}`
+      await this.store.writeCachedResult(state.id, offloadKey, inputs.join("\n\n"))
+      synthesisInputs = [
+        `## Context offloaded`,
+        `Total intermediate results: ${inputs.length} agents`,
+        `Offloaded to cache key: ${offloadKey}`,
+        `Load full context from cache if needed.`,
+        inputs[0], // Keep first agent as sample
+        inputs[inputs.length - 1], // Keep last agent as sample
+      ]
+    }
+
+    const synthesisTotal = synthesisInputs.join("\n\n").length
+    const chunkSize = synthesisTotal > options.maxSummaryInputChars ? 12 : Math.max(1, synthesisInputs.length)
+    const chunks = chunkArray(synthesisInputs, chunkSize)
     const partials = await mapLimit(chunks, Math.min(options.concurrency, 4), async (chunk, index) => {
       const sessionId = await this.client.createSession(`dw:${state.id}:synthesis-chunk-${index + 1}`)
       const latest = await this.store.load(state.id)
@@ -540,6 +697,10 @@ function buildSynthesisPrompt(state: WorkflowState, input: string, final: boolea
     "",
     input,
   ].join("\n")
+}
+
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4)
 }
 
 function coerceVerification(value: Record<string, unknown> | undefined, rawText: string): VerificationResult {

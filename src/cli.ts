@@ -38,6 +38,21 @@ async function main(argv: string[]): Promise<void> {
     case "pause":
       await pauseCommand(parsed)
       break
+    case "approve":
+      await approveCommand(parsed)
+      break
+    case "reject":
+      await rejectCommand(parsed)
+      break
+    case "templates":
+      await templatesCommand(parsed)
+      break
+    case "skills":
+      await skillsCommand(parsed)
+      break
+    case "dashboard":
+      await dashboardCommand(parsed)
+      break
     case "install-command":
       await installCommand(parsed)
       break
@@ -123,6 +138,67 @@ async function pauseCommand(parsed: ParsedArgs): Promise<void> {
   }
 }
 
+async function approveCommand(parsed: ParsedArgs): Promise<void> {
+  const { approveWorkflow } = await import("./approval.js")
+  const cwd = getStringFlag(parsed, "cwd") ?? process.cwd()
+  const store = new FileWorkflowStore(cwd)
+  const state = parsed.positionals[0] ? await store.load(parsed.positionals[0]) : await store.loadLatest()
+  const updated = await approveWorkflow(state.id, store)
+  printStateResult(updated, Boolean(parsed.flags.json))
+}
+
+async function rejectCommand(parsed: ParsedArgs): Promise<void> {
+  const { rejectWorkflow } = await import("./approval.js")
+  const cwd = getStringFlag(parsed, "cwd") ?? process.cwd()
+  const store = new FileWorkflowStore(cwd)
+  const state = parsed.positionals[0] ? await store.load(parsed.positionals[0]) : await store.loadLatest()
+  const reason = getStringFlag(parsed, "reason")
+  const updated = await rejectWorkflow(state.id, store, reason)
+  printStateResult(updated, Boolean(parsed.flags.json))
+}
+
+async function templatesCommand(parsed: ParsedArgs): Promise<void> {
+  const { listTemplates } = await import("./templates.js")
+  const templates = listTemplates()
+  if (parsed.flags.json) {
+    process.stdout.write(`${JSON.stringify(templates, null, 2)}\n`)
+    return
+  }
+  for (const t of templates) {
+    process.stdout.write(`${t.id}\t[${t.category}]\t${t.name}\n  ${t.description}\n`)
+  }
+}
+
+async function skillsCommand(parsed: ParsedArgs): Promise<void> {
+  const { listSkills } = await import("./skills.js")
+  const skills = listSkills()
+  if (parsed.flags.json) {
+    process.stdout.write(`${JSON.stringify(skills, null, 2)}\n`)
+    return
+  }
+  for (const s of skills) {
+    process.stdout.write(`${s.id}\t${s.name}\n  ${s.description}\n`)
+  }
+}
+
+async function dashboardCommand(parsed: ParsedArgs): Promise<void> {
+  const { buildSnapshot, formatSnapshot } = await import("./dashboard.js")
+  const cwd = getStringFlag(parsed, "cwd") ?? process.cwd()
+  const store = new FileWorkflowStore(cwd)
+  const state = parsed.positionals[0] ? await store.load(parsed.positionals[0]) : await store.loadLatest()
+  const snapshot = await buildSnapshot(store, state.id)
+  if (!snapshot) {
+    process.stderr.write("Failed to build dashboard snapshot.\n")
+    process.exitCode = 1
+    return
+  }
+  if (parsed.flags.json) {
+    process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`)
+    return
+  }
+  process.stdout.write(formatSnapshot(snapshot) + "\n")
+}
+
 async function installCommand(parsed: ParsedArgs): Promise<void> {
   const cwd = getStringFlag(parsed, "cwd") ?? process.cwd()
   const path = await installWorkflowCommand(cwd, Boolean(parsed.flags.global))
@@ -156,6 +232,41 @@ function buildOptions(objective: string, parsed: ParsedArgs): DynamicWorkflowOpt
   options.maxSummaryInputChars = getNumberFlag(parsed, "max-summary-input", options.maxSummaryInputChars)
   options.qualityGateTimeoutMs = getNumberFlag(parsed, "quality-gate-timeout-ms", options.qualityGateTimeoutMs)
   options.models = parseModels(parsed)
+
+  // New options
+  options.stoppingCondition = getStringFlag(parsed, "stopping-condition")
+  const orchestrationMode = getStringFlag(parsed, "orchestration-mode")
+  if (orchestrationMode === "static" || orchestrationMode === "dynamic") {
+    options.orchestrationMode = orchestrationMode
+  }
+  const effortLevel = getStringFlag(parsed, "effort")
+  if (effortLevel === "low" || effortLevel === "medium" || effortLevel === "high" || effortLevel === "ultra") {
+    options.effortLevel = effortLevel
+  }
+  const permissionMode = getStringFlag(parsed, "permission-mode")
+  if (permissionMode === "full" || permissionMode === "plan" || permissionMode === "ask") {
+    options.permissionMode = permissionMode
+  }
+  options.requireApproval = Boolean(parsed.flags["require-approval"])
+  options.adversarialReview = Boolean(parsed.flags["adversarial-review"])
+  options.convergenceThreshold = getNumberFlag(parsed, "convergence-threshold", options.convergenceThreshold)
+  options.generateOrchestrationScript = Boolean(parsed.flags["generate-orchestration-script"])
+  options.saveWorkflow = Boolean(parsed.flags["save-workflow"])
+  options.workflowName = getStringFlag(parsed, "workflow-name")
+  options.useWorktree = Boolean(parsed.flags["use-worktree"])
+  options.worktreeName = getStringFlag(parsed, "worktree-name")
+  options.tokenBudget = getNumberFlag(parsed, "token-budget", options.tokenBudget ?? 0) || undefined
+  options.contextOffloadThreshold = getNumberFlag(parsed, "context-offload-threshold", options.contextOffloadThreshold)
+  options.progressReportIntervalMs = getNumberFlag(parsed, "progress-interval-ms", options.progressReportIntervalMs)
+
+  const template = getStringFlag(parsed, "template")
+  if (template) {
+    options.template = template
+  }
+
+  const skills = getArrayFlag(parsed, "skill")
+  if (skills.length) options.skills = skills
+
   return options
 }
 
@@ -175,6 +286,12 @@ function buildResumeOptions(existing: WorkflowState, parsed: ParsedArgs): Dynami
   options.maxSummaryInputChars = getNumberFlag(parsed, "max-summary-input", options.maxSummaryInputChars)
   options.qualityGateTimeoutMs = getNumberFlag(parsed, "quality-gate-timeout-ms", options.qualityGateTimeoutMs)
   options.models = mergeModels(existing.options.models, parseModels(parsed))
+
+  if (parsed.flags["require-approval"]) options.requireApproval = true
+  if (parsed.flags["adversarial-review"]) options.adversarialReview = true
+  options.tokenBudget = getNumberFlag(parsed, "token-budget", options.tokenBudget ?? 0) || undefined
+  options.progressReportIntervalMs = getNumberFlag(parsed, "progress-interval-ms", options.progressReportIntervalMs)
+
   return options
 }
 
@@ -279,6 +396,11 @@ Usage:
   ocdw list [--cwd .]
   ocdw pause [workflow-id] [--cwd .]
   ocdw abort [workflow-id] [--cwd .]
+  ocdw approve [workflow-id] [--cwd .]
+  ocdw reject [workflow-id] [--cwd .] [--reason "..."]
+  ocdw templates [--json]
+  ocdw skills [--json]
+  ocdw dashboard [workflow-id] [--cwd .]
   ocdw install-command [--cwd .] [--global]
 
 Options:
@@ -297,6 +419,24 @@ Options:
   --dry-run                         Plan and checkpoint without executing
   --cleanup                         Delete OpenCode sessions after collecting outputs
   --json                            Emit JSON logs/results
+
+  --stopping-condition <text>     Explicit stopping condition / verifiable end state
+  --effort <low|medium|high|ultra>  Effort level (default high)
+  --permission-mode <full|plan|ask> Permission mode (default full)
+  --require-approval                Require human approval before executing plan
+  --adversarial-review            Enable adversarial review with convergence
+  --convergence-threshold <n>       Adversarial convergence threshold 0-1 (default 0.75)
+  --generate-orchestration-script   Generate dynamic orchestration script from plan
+  --orchestration-mode <static|dynamic> Orchestration strategy (default static)
+  --template <id>                 Use a built-in workflow template
+  --skill <id>                      Apply a skill constraint (repeatable)
+  --save-workflow                   Save completed workflow as reusable template
+  --workflow-name <name>            Name for saved workflow
+  --use-worktree                    Run in a git worktree for isolation
+  --worktree-name <name>            Name for the worktree
+  --token-budget <n>                Maximum token budget for this workflow
+  --context-offload-threshold <n>   Char threshold for context offloading (default 200000)
+  --progress-interval-ms <n>        Progress report interval in ms (default 60000)
 `)
 }
 

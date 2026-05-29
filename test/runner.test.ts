@@ -15,6 +15,7 @@ function samplePlan(): WorkflowPlan {
     title: "Sample",
     summary: "Sample dynamic workflow",
     maxAgentEstimate: 3,
+    requiresApproval: false,
     phases: [
       {
         id: "survey",

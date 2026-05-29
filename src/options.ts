@@ -16,12 +16,25 @@ export function defaultWorkflowOptions(objective: string, cwd = process.cwd()): 
     failFast: true,
     maxSummaryInputChars: 60_000,
     models: {},
+    orchestrationMode: "static",
+    effortLevel: "high",
+    permissionMode: "full",
+    requireApproval: false,
+    adversarialReview: false,
+    convergenceThreshold: 0.75,
+    generateOrchestrationScript: false,
+    saveWorkflow: false,
+    useWorktree: false,
+    skills: [],
+    contextOffloadThreshold: 200_000,
+    progressReportIntervalMs: 60_000,
   }
 }
 
 export function optionsFromState(state: WorkflowState): DynamicWorkflowOptions {
   return {
     objective: state.objective,
+    stoppingCondition: state.stoppingCondition,
     cwd: state.cwd,
     workflowId: state.id,
     maxAgents: state.options.maxAgents,
@@ -35,6 +48,21 @@ export function optionsFromState(state: WorkflowState): DynamicWorkflowOptions {
     maxSummaryInputChars: state.options.maxSummaryInputChars,
     models: state.options.models,
     metadata: state.options.metadata,
+    orchestrationMode: state.options.orchestrationMode,
+    effortLevel: state.options.effortLevel,
+    permissionMode: state.options.permissionMode,
+    requireApproval: state.options.requireApproval,
+    adversarialReview: state.options.adversarialReview,
+    convergenceThreshold: state.options.convergenceThreshold,
+    generateOrchestrationScript: state.options.generateOrchestrationScript,
+    saveWorkflow: state.options.saveWorkflow,
+    workflowName: state.options.workflowName,
+    useWorktree: state.options.useWorktree,
+    skills: state.options.skills,
+    template: state.options.template,
+    tokenBudget: state.options.tokenBudget,
+    contextOffloadThreshold: state.options.contextOffloadThreshold,
+    progressReportIntervalMs: state.options.progressReportIntervalMs,
   }
 }
 

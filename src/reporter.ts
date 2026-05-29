@@ -15,6 +15,20 @@ export class ConsoleReporter implements Reporter {
     this.write("error", message, details)
   }
 
+  progress(report: import("./types.js").ProgressReport): void {
+    if (this.json) {
+      process.stdout.write(`${JSON.stringify({ time: new Date().toISOString(), level: "progress", report })}\n`)
+      return
+    }
+    const pct = report.totalTasks > 0 ? Math.round((report.completedTasks / report.totalTasks) * 100) : 0
+    process.stdout.write(
+      `[progress] ${report.completedTasks}/${report.totalTasks} tasks, ${pct}% complete | tokens: ${report.tokensUsed}\n`,
+    )
+    if (report.blockers.length) {
+      process.stdout.write(`  blockers: ${report.blockers.join("; ")}\n`)
+    }
+  }
+
   private write(level: string, message: string, details?: Record<string, unknown>): void {
     if (this.json) {
       process.stdout.write(`${JSON.stringify({ time: new Date().toISOString(), level, message, details })}\n`)

@@ -1,10 +1,16 @@
-export type WorkflowStatus = "planning" | "running" | "paused" | "completed" | "failed" | "aborted"
+export type WorkflowStatus = "planning" | "plan_approval" | "running" | "paused" | "completed" | "failed" | "aborted"
 
-export type PhaseStatus = "pending" | "running" | "completed" | "failed" | "skipped"
+export type PhaseStatus = "pending" | "running" | "completed" | "failed" | "skipped" | "awaiting_approval"
 
-export type TaskStatus = "pending" | "running" | "completed" | "failed" | "skipped"
+export type TaskStatus = "pending" | "running" | "completed" | "failed" | "skipped" | "awaiting_approval"
 
-export type ModelRole = "planner" | "worker" | "verifier" | "synthesizer" | "critic" | "scout"
+export type ModelRole = "planner" | "worker" | "verifier" | "synthesizer" | "critic" | "scout" | "adversary"
+
+export type EffortLevel = "low" | "medium" | "high" | "ultra"
+
+export type PermissionMode = "full" | "plan" | "ask"
+
+export type OrchestrationMode = "static" | "dynamic"
 
 export interface ModelRouterConfig {
   default?: string
@@ -19,6 +25,7 @@ export interface ModelRouterConfig {
 
 export interface DynamicWorkflowOptions {
   objective: string
+  stoppingCondition?: string
   cwd: string
   baseUrl?: string
   workflowId?: string
@@ -34,6 +41,23 @@ export interface DynamicWorkflowOptions {
   maxSummaryInputChars: number
   models: ModelRouterConfig
   metadata?: Record<string, unknown>
+  orchestrationMode: OrchestrationMode
+  effortLevel: EffortLevel
+  permissionMode: PermissionMode
+  requireApproval: boolean
+  adversarialReview: boolean
+  convergenceThreshold: number
+  generateOrchestrationScript: boolean
+  saveWorkflow: boolean
+  workflowName?: string
+  useWorktree: boolean
+  worktreeName?: string
+  schedule?: WorkflowSchedule
+  skills: string[]
+  template?: string
+  tokenBudget?: number
+  contextOffloadThreshold: number
+  progressReportIntervalMs: number
 }
 
 export interface WorkflowPlan {
@@ -41,6 +65,10 @@ export interface WorkflowPlan {
   summary: string
   maxAgentEstimate: number
   phases: WorkflowPhase[]
+  estimatedTokens?: number
+  estimatedCost?: number
+  orchestrationScript?: string
+  requiresApproval: boolean
 }
 
 export interface WorkflowPhase {
@@ -94,6 +122,26 @@ export interface VerificationResult {
   evidence: string[]
   followUpPrompt?: string
   rawText: string
+  tokensUsed?: number
+}
+
+export interface AdversarialReview {
+  reviewerId: string
+  reviewerRole: ModelRole
+  verdict: "refute" | "support" | "neutral"
+  confidence: number
+  issues: string[]
+  evidence: string[]
+  rawText: string
+  tokensUsed?: number
+}
+
+export interface ConvergenceResult {
+  converged: boolean
+  consensusConfidence: number
+  reviews: AdversarialReview[]
+  finalVerdict: "accept" | "reject" | "needs_work"
+  iterations: number
 }
 
 export interface TaskAttempt {
@@ -105,6 +153,9 @@ export interface TaskAttempt {
   output?: string
   error?: string
   verification?: VerificationResult
+  adversarialReviews?: AdversarialReview[]
+  convergence?: ConvergenceResult
+  tokensUsed?: number
 }
 
 export interface TaskRunState {
@@ -115,7 +166,10 @@ export interface TaskRunState {
   output?: string
   verified: boolean
   verification?: VerificationResult
+  adversarialReviews?: AdversarialReview[]
+  convergence?: ConvergenceResult
   updatedAt: string
+  tokensUsed: number
 }
 
 export interface PhaseRunState {
@@ -125,6 +179,7 @@ export interface PhaseRunState {
   completedAt?: string
   gateResults: ShellResult[]
   error?: string
+  tokensUsed: number
 }
 
 export interface WorkflowEvent {
@@ -145,11 +200,29 @@ export interface StoredWorkflowOptions {
   maxSummaryInputChars: number
   models: ModelRouterConfig
   metadata?: Record<string, unknown>
+  orchestrationMode: OrchestrationMode
+  effortLevel: EffortLevel
+  permissionMode: PermissionMode
+  requireApproval: boolean
+  adversarialReview: boolean
+  convergenceThreshold: number
+  generateOrchestrationScript: boolean
+  saveWorkflow: boolean
+    workflowName?: string
+    useWorktree: boolean
+    worktreeName?: string
+    schedule?: WorkflowSchedule
+    skills: string[]
+    template?: string
+    tokenBudget?: number
+    contextOffloadThreshold: number
+    progressReportIntervalMs: number
 }
 
 export interface WorkflowState {
   id: string
   objective: string
+  stoppingCondition?: string
   cwd: string
   status: WorkflowStatus
   createdAt: string
@@ -162,6 +235,48 @@ export interface WorkflowState {
   summary?: string
   summaryPath?: string
   error?: string
+  totalTokensUsed: number
+  totalCostEstimate?: number
+  progressReports: ProgressReport[]
+  worktreePath?: string
+  schedule?: WorkflowSchedule
+  isTemplate: boolean
+  templateName?: string
+  convergenceResults: Record<string, ConvergenceResult>
+}
+
+export interface ProgressReport {
+  checkpoint: string
+  time: string
+  completedTasks: number
+  totalTasks: number
+  completedPhases: number
+  totalPhases: number
+  currentPhase?: string
+  currentTask?: string
+  verifiedEvidence: string[]
+  remainingWork: string[]
+  blockers: string[]
+  tokensUsed: number
+}
+
+export interface WorkflowSchedule {
+  type: "cron" | "interval" | "once"
+  expression: string
+  timezone?: string
+  nextRun?: string
+  lastRun?: string
+}
+
+export interface WorkflowTemplate {
+  id: string
+  name: string
+  description: string
+  category: string
+  objectivePattern: string
+  defaultOptions: Partial<DynamicWorkflowOptions>
+  planTemplate?: WorkflowPlan
+  skills: string[]
 }
 
 export interface WorkflowClient {
@@ -175,6 +290,7 @@ export interface WorkflowClient {
   abortSession(sessionId: string): Promise<void>
   log(level: "debug" | "info" | "warn" | "error", message: string, extra?: Record<string, unknown>): Promise<void>
   close?(): Promise<void>
+  getSessionMessages?(sessionId: string): Promise<unknown>
 }
 
 export interface ClientPromptOptions {
@@ -194,4 +310,5 @@ export interface Reporter {
   info(message: string, details?: Record<string, unknown>): void
   warn(message: string, details?: Record<string, unknown>): void
   error(message: string, details?: Record<string, unknown>): void
+  progress?(report: ProgressReport): void
 }

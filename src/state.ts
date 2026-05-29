@@ -9,13 +9,33 @@ import type {
   WorkflowPlan,
   WorkflowState,
 } from "./types.js"
-import { createWorkflowId, nowIso } from "./util.js"
+import { createWorkflowId, nowIso, slugify } from "./util.js"
 
 export class FileWorkflowStore {
   readonly root: string
 
   constructor(cwd: string) {
     this.root = join(resolve(cwd), ".opencode", "dynamic-workflows")
+  }
+
+  workflowsDir(): string {
+    return join(this.root, "workflows")
+  }
+
+  templatesDir(): string {
+    return join(this.root, "templates")
+  }
+
+  skillsDir(): string {
+    return join(this.root, "skills")
+  }
+
+  cacheDir(workflowId: string): string {
+    return join(this.runDir(workflowId), "cache")
+  }
+
+  progressPath(workflowId: string): string {
+    return join(this.runDir(workflowId), "progress.jsonl")
   }
 
   runDir(workflowId: string): string {
@@ -40,6 +60,7 @@ export class FileWorkflowStore {
     const state: WorkflowState = {
       id,
       objective: options.objective,
+      stoppingCondition: options.stoppingCondition,
       cwd: resolve(options.cwd),
       status: "planning",
       createdAt: now,
@@ -55,10 +76,29 @@ export class FileWorkflowStore {
         maxSummaryInputChars: options.maxSummaryInputChars,
         models: options.models,
         metadata: options.metadata,
+        orchestrationMode: options.orchestrationMode,
+        effortLevel: options.effortLevel,
+        permissionMode: options.permissionMode,
+        requireApproval: options.requireApproval,
+        adversarialReview: options.adversarialReview,
+        convergenceThreshold: options.convergenceThreshold,
+        generateOrchestrationScript: options.generateOrchestrationScript,
+        saveWorkflow: options.saveWorkflow,
+        workflowName: options.workflowName,
+        useWorktree: options.useWorktree,
+        skills: options.skills,
+        template: options.template,
+        tokenBudget: options.tokenBudget,
+        contextOffloadThreshold: options.contextOffloadThreshold,
+        progressReportIntervalMs: options.progressReportIntervalMs,
       },
       phases: {},
       tasks: {},
       sessions: [],
+      totalTokensUsed: 0,
+      progressReports: [],
+      isTemplate: false,
+      convergenceResults: {},
     }
     await this.save(state)
     await this.setLatest(id)
@@ -66,7 +106,7 @@ export class FileWorkflowStore {
       time: now,
       type: "workflow.created",
       message: "Workflow created",
-      details: { objective: options.objective },
+      details: { objective: options.objective, effortLevel: options.effortLevel, orchestrationMode: options.orchestrationMode },
     })
     return state
   }
@@ -131,6 +171,58 @@ export class FileWorkflowStore {
     await writeFile(path, content, "utf8")
     return path
   }
+
+  async saveProgressReport(workflowId: string, report: import("./types.js").ProgressReport): Promise<void> {
+    const path = this.progressPath(workflowId)
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, `${JSON.stringify(report)}\n`, { encoding: "utf8", flag: "a" })
+  }
+
+  async readCachedResult(workflowId: string, cacheKey: string): Promise<string | undefined> {
+    const path = join(this.cacheDir(workflowId), `${cacheKey}.json`)
+    try {
+      return await readFile(path, "utf8")
+    } catch {
+      return undefined
+    }
+  }
+
+  async writeCachedResult(workflowId: string, cacheKey: string, content: string): Promise<void> {
+    const dir = this.cacheDir(workflowId)
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, `${cacheKey}.json`), content, "utf8")
+  }
+
+  async saveWorkflowTemplate(workflowId: string, name: string, state: WorkflowState): Promise<string> {
+    const dir = this.workflowsDir()
+    await mkdir(dir, { recursive: true })
+    const path = join(dir, `${slugify(name)}.json`)
+    await writeFile(path, `${JSON.stringify(state, null, 2)}\n`, "utf8")
+    return path
+  }
+
+  async listWorkflowTemplates(): Promise<Array<{ name: string; path: string }>> {
+    const dir = this.workflowsDir()
+    let files: string[] = []
+    try {
+      files = await readdir(dir)
+    } catch {
+      return []
+    }
+    return files
+      .filter((f) => f.endsWith(".json"))
+      .map((f) => ({ name: f.replace(/\.json$/, ""), path: join(dir, f) }))
+  }
+
+  async loadWorkflowTemplate(name: string): Promise<WorkflowState | undefined> {
+    const path = join(this.workflowsDir(), `${slugify(name)}.json`)
+    try {
+      const raw = await readFile(path, "utf8")
+      return JSON.parse(raw) as WorkflowState
+    } catch {
+      return undefined
+    }
+  }
 }
 
 export function initializePlanState(state: WorkflowState, plan: WorkflowPlan): WorkflowState {
@@ -142,6 +234,7 @@ export function initializePlanState(state: WorkflowState, plan: WorkflowPlan): W
       phaseId: phase.id,
       status: "pending",
       gateResults: [],
+      tokensUsed: 0,
     }
     state.phases[phase.id] = phaseState
     for (const task of phase.tasks) {
@@ -152,6 +245,7 @@ export function initializePlanState(state: WorkflowState, plan: WorkflowPlan): W
         attempts: [],
         verified: false,
         updatedAt: nowIso(),
+        tokensUsed: 0,
       }
       state.tasks[task.id] = taskState
     }
