@@ -42,9 +42,14 @@ export class DynamicWorkflowRunner {
     private readonly reporter: Reporter = new SilentReporter(),
   ) {}
 
+  private throwIfAborted(options: DynamicWorkflowOptions): void {
+    if (options.signal?.aborted) throw new Error("workflow aborted")
+  }
+
   async run(options: DynamicWorkflowOptions): Promise<WorkflowState> {
     let state = options.workflowId ? await this.store.load(options.workflowId) : await this.store.create(options)
     await this.client.health()
+    this.throwIfAborted(options)
 
     if (!state.plan) {
       this.reporter.info("Planning workflow", { workflowId: state.id })
@@ -61,6 +66,7 @@ export class DynamicWorkflowRunner {
         }
       }
 
+      this.throwIfAborted(options)
       const plan = await createDynamicPlan(this.client, options)
       initializePlanState(state, plan)
       await this.store.writeArtifact(state.id, "plan.json", `${JSON.stringify(plan, null, 2)}\n`)
@@ -110,6 +116,7 @@ export class DynamicWorkflowRunner {
         if (progressTimerActive) return
         progressTimerActive = true
         try {
+          this.throwIfAborted(options)
           const current = await this.store.load(state.id)
           if (current.status !== "running") return
           const report = await generateProgressReport(this.client, current, options)
@@ -122,6 +129,7 @@ export class DynamicWorkflowRunner {
             await this.accumulateTokens(state.id, tokensUsed)
           }
         } catch (error) {
+          if (options.signal?.aborted) return
           this.reporter.warn("Progress report failed", { error: toErrorMessage(error) })
         } finally {
           progressTimerActive = false
@@ -136,6 +144,7 @@ export class DynamicWorkflowRunner {
 
     try {
       for (const phase of plan.phases) {
+        this.throwIfAborted(options)
         state = await this.refreshControlState(state)
         if (state.status === "paused" || state.status === "aborted") break
 
@@ -192,6 +201,10 @@ export class DynamicWorkflowRunner {
 
       return completedState
     } catch (error) {
+      if (options.signal?.aborted) {
+        if (progressTimerTimeout) clearTimeout(progressTimerTimeout)
+        throw error
+      }
       const errorMessage = toErrorMessage(error)
       state = await this.store.load(state.id)
       await this.store.mutateState(state.id, (s) => {

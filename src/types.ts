@@ -58,6 +58,7 @@ export interface DynamicWorkflowOptions {
   tokenBudget?: number
   contextOffloadThreshold: number
   progressReportIntervalMs: number
+  signal?: AbortSignal
 }
 
 export interface WorkflowPlan {
