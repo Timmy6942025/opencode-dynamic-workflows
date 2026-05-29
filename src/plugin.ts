@@ -19,6 +19,12 @@ function normalizeWorkflowArgs(args: unknown): Record<string, unknown> {
   return value
 }
 
+// Detect dry-run patterns in the user's input
+function containsDryRunHint(objective: string): boolean {
+  const lower = objective.toLowerCase()
+  return /--dry[- ]?run|preview|plan only|dry[- ]?run|just plan|show me (the )?plan|what (would|will) (happen|be done)/.test(lower)
+}
+
 const WORKFLOW_DESCRIPTION = [
   "Launch a model-agnostic dynamic workflow that plans, fans out OpenCode subagents, verifies results, checkpoints state, and synthesizes a final report.",
   "",
@@ -63,6 +69,7 @@ export const DynamicWorkflowsPlugin: Plugin = async (ctx) => {
           token_budget: tool.schema.number().optional().describe("Maximum token budget."),
           save_workflow: tool.schema.boolean().optional().describe("Save as reusable workflow template."),
           workflow_name: tool.schema.string().optional().describe("Name for saved workflow."),
+          dry_run: tool.schema.boolean().optional().describe("Preview the workflow plan without executing tasks."),
         },
         async execute(args) {
           const normalized = normalizeWorkflowArgs(args)
@@ -88,6 +95,11 @@ export const DynamicWorkflowsPlugin: Plugin = async (ctx) => {
           if (normalized.save_workflow === true) options.saveWorkflow = true
           if (typeof normalized.workflow_name === "string") options.workflowName = normalized.workflow_name
 
+          // Handle dry_run: explicit flag OR auto-detected from language hints
+          const dryRunExplicit = normalized.dry_run === true
+          const dryRunHint = containsDryRunHint(String(normalized.objective))
+          options.dryRun = dryRunExplicit || dryRunHint
+
           const client = new SdkLikeWorkflowClient(ctx.client)
           const store = new FileWorkflowStore(cwd)
           const reporter = new ConsoleReporter()
@@ -106,11 +118,15 @@ export const DynamicWorkflowsPlugin: Plugin = async (ctx) => {
                 },
               })
             })
+
+            if (options.dryRun) {
+              return `Dry run: workflow ${state.id} planned (not executed). Plan artifact: .opencode/dynamic-workflows/runs/${state.id}/plan.json`
+            }
             return `Started dynamic workflow ${state.id}. Status and artifacts are under .opencode/dynamic-workflows/runs/${state.id}.`
           }
 
           const state = await runner.run(options)
-          return formatWorkflowResult(state)
+          return formatWorkflowResult(state, options.dryRun)
         },
       }),
     },
@@ -118,7 +134,16 @@ export const DynamicWorkflowsPlugin: Plugin = async (ctx) => {
   }
 }
 
-function formatWorkflowResult(state: WorkflowState): string {
+function formatWorkflowResult(state: WorkflowState, dryRun = false): string {
+  if (dryRun || state.status === "paused") {
+    const lines = [
+      `(dry run) Workflow ${state.id} planned — not executed.`,
+      `Plan: .opencode/dynamic-workflows/runs/${state.id}/plan.json`,
+      `Phases: ${Object.keys(state.phases).length} planned`,
+      `Tasks: ${Object.keys(state.tasks).length} planned`,
+    ]
+    return lines.join("\n")
+  }
   const lines = [
     `Workflow ${state.id} finished with status ${state.status}.`,
     `Summary: ${state.summaryPath ?? "not written"}`,
