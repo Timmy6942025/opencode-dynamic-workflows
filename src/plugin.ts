@@ -19,10 +19,10 @@ function normalizeWorkflowArgs(args: unknown): Record<string, unknown> {
   return value
 }
 
-// Detect dry-run patterns in the user's input
+// Detect dry-run patterns in the user's input (requires explicit indicators)
 function containsDryRunHint(objective: string): boolean {
   const lower = objective.toLowerCase()
-  return /--dry[- ]?run|preview|plan only|dry[- ]?run|just plan|show me (the )?plan|what (would|will) (happen|be done)/.test(lower)
+  return /--dry[- ]?run|dry[- ]?run|plan only|just plan|show.me plan|what (will|happens? if)|simulate|test run/i.test(lower)
 }
 
 const WORKFLOW_DESCRIPTION = [
@@ -47,34 +47,53 @@ const WORKFLOW_DESCRIPTION = [
 ].join("\n")
 
 export const DynamicWorkflowsPlugin: Plugin = async (ctx) => {
+  ctx.client.app.log({
+    body: {
+      service: "oc-dw",
+      level: "info",
+      message: `oc-dw plugin loaded (cwd: ${ctx.directory})`,
+      extra: { worktree: ctx.worktree },
+    },
+  })
+
   return {
     tool: {
       dynamic_workflow_run: tool({
         description: WORKFLOW_DESCRIPTION,
         args: {
-          objective: tool.schema.string().describe("The workflow objective."),
-          stopping_condition: tool.schema.string().optional().describe("Explicit stopping condition / verifiable end state."),
-          max_agents: tool.schema.number().optional().describe("Maximum worker tasks to allow. Defaults to 1000."),
-          concurrency: tool.schema.number().optional().describe("Maximum concurrent OpenCode sessions. Defaults to 16."),
-          planner_model: tool.schema.string().optional().describe("Optional OpenCode provider/model id for planning."),
-          worker_model: tool.schema.string().optional().describe("Optional OpenCode provider/model id for workers."),
-          verifier_model: tool.schema.string().optional().describe("Optional OpenCode provider/model id for verification."),
-          synthesizer_model: tool.schema.string().optional().describe("Optional OpenCode provider/model id for synthesis."),
-          background: tool.schema.boolean().optional().describe("Run in the background. Defaults to true."),
-          effort: tool.schema.enum(["low", "medium", "high", "ultra"]).optional().describe("Effort level. Defaults to high."),
-          require_approval: tool.schema.boolean().optional().describe("Require human approval before executing plan."),
-          adversarial_review: tool.schema.boolean().optional().describe("Enable adversarial review with convergence."),
-          template: tool.schema.string().optional().describe("Built-in workflow template id."),
-          skill: tool.schema.array(tool.schema.string()).optional().describe("Skill constraints to apply."),
-          token_budget: tool.schema.number().optional().describe("Maximum token budget."),
-          save_workflow: tool.schema.boolean().optional().describe("Save as reusable workflow template."),
-          workflow_name: tool.schema.string().optional().describe("Name for saved workflow."),
-          dry_run: tool.schema.boolean().optional().describe("Preview the workflow plan without executing tasks."),
+          objective: tool.schema.string().describe("The workflow objective — a clear, actionable goal for the dynamic workflow to accomplish."),
+          stopping_condition: tool.schema.string().optional().describe("An explicit, verifiable end state that determines when the workflow is complete. When specified, the workflow stops when this condition is satisfied."),
+          max_agents: tool.schema.number().optional().describe("Maximum number of worker tasks allowed. Defaults to 1000. Use to bound resource usage on large workflows."),
+          concurrency: tool.schema.number().optional().describe("Maximum number of concurrent OpenCode sessions. Defaults to 16. Higher values speed up fan-out but increase API usage."),
+          planner_model: tool.schema.string().optional().describe("OpenCode provider/model id for the planning agent (e.g., 'anthropic/claude-sonnet-4-5'). When not set, uses the default model."),
+          worker_model: tool.schema.string().optional().describe("OpenCode provider/model id for worker agents. When not set, uses the default model."),
+          verifier_model: tool.schema.string().optional().describe("OpenCode provider/model id for verification agents. When not set, uses the default model."),
+          synthesizer_model: tool.schema.string().optional().describe("OpenCode provider/model id for the synthesis agent. When not set, uses the default model."),
+          background: tool.schema.boolean().optional().describe("Run the workflow in the background and return immediately. Defaults to true. Set to false for synchronous completion in the tool call."),
+          effort: tool.schema.enum(["low", "medium", "high", "ultra"]).optional().describe("Planning effort level. low=1-2 phases, medium=3-4, high=5-8, ultra=9+. Defaults to high."),
+          require_approval: tool.schema.boolean().optional().describe("When true, the workflow pauses after planning and requests human approval before executing any tasks."),
+          adversarial_review: tool.schema.boolean().optional().describe("Enable adversarial review: spawn independent reviewer agents to verify convergence before marking tasks complete."),
+          template: tool.schema.string().optional().describe("Built-in workflow template id to use (e.g., 'deep-research', 'codebase-audit', 'large-migration', 'test-generation'). Template is applied before planning."),
+          skill: tool.schema.array(tool.schema.string()).optional().describe("Skill constraints to apply to all workers (e.g., 'security-first', 'test-driven', 'strict-types', 'docs-required')."),
+          token_budget: tool.schema.number().optional().describe("Maximum token budget for the entire workflow. When exceeded, the workflow pauses and reports partial results."),
+          save_workflow: tool.schema.boolean().optional().describe("When true, saves the completed workflow as a reusable template under .opencode/dynamic-workflows/templates/."),
+          workflow_name: tool.schema.string().optional().describe("Name for the saved workflow template. Required when save_workflow is true."),
+          dry_run: tool.schema.boolean().optional().describe("Preview the workflow plan without executing any tasks. The plan is written to .opencode/dynamic-workflows/runs/<id>/plan.json."),
         },
         async execute(args) {
           const normalized = normalizeWorkflowArgs(args)
           const cwd = ctx.worktree || ctx.directory
-          const options = defaultWorkflowOptions(String(normalized.objective), cwd)
+          const objective = String(normalized.objective)
+
+          ctx.client.app.log({
+            body: {
+              service: "oc-dw",
+              level: "debug",
+              message: `dynamic_workflow_run invoked: ${objective.slice(0, 80)}`,
+            },
+          })
+
+          const options = defaultWorkflowOptions(objective, cwd)
           if (typeof normalized.stopping_condition === "string") options.stoppingCondition = normalized.stopping_condition
           if (typeof normalized.max_agents === "number") options.maxAgents = normalized.max_agents
           if (typeof normalized.concurrency === "number") options.concurrency = normalized.concurrency
@@ -97,7 +116,7 @@ export const DynamicWorkflowsPlugin: Plugin = async (ctx) => {
 
           // Handle dry_run: explicit flag OR auto-detected from language hints
           const dryRunExplicit = normalized.dry_run === true
-          const dryRunHint = containsDryRunHint(String(normalized.objective))
+          const dryRunHint = containsDryRunHint(objective)
           options.dryRun = dryRunExplicit || dryRunHint
 
           const client = new SdkLikeWorkflowClient(ctx.client)
@@ -119,6 +138,15 @@ export const DynamicWorkflowsPlugin: Plugin = async (ctx) => {
               })
             })
 
+            ctx.client.app.log({
+              body: {
+                service: "oc-dw",
+                level: "info",
+                message: `Workflow ${state.id} started in background${options.dryRun ? " (dry run)" : ""}`,
+                extra: { workflowId: state.id, dryRun: options.dryRun },
+              },
+            })
+
             if (options.dryRun) {
               return `Dry run: workflow ${state.id} planned (not executed). Plan artifact: .opencode/dynamic-workflows/runs/${state.id}/plan.json`
             }
@@ -126,6 +154,16 @@ export const DynamicWorkflowsPlugin: Plugin = async (ctx) => {
           }
 
           const state = await runner.run(options)
+
+          ctx.client.app.log({
+            body: {
+              service: "oc-dw",
+              level: "info",
+              message: `Workflow ${state.id} completed with status ${state.status}`,
+              extra: { workflowId: state.id, status: state.status, tokens: state.totalTokensUsed },
+            },
+          })
+
           return formatWorkflowResult(state, options.dryRun)
         },
       }),
