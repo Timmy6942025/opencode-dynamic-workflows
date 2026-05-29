@@ -16,11 +16,11 @@ export interface ModelRouterConfig {
   default?: string
   planner?: string
   worker?: string
-  verifier?: string
+  verifier?: string | string[]
   synthesizer?: string
   critic?: string
   scout?: string
-  [role: string]: string | undefined
+  [role: string]: string | string[] | undefined
 }
 
 export interface DynamicWorkflowOptions {
@@ -55,6 +55,8 @@ export interface DynamicWorkflowOptions {
   schedule?: WorkflowSchedule
   skills: string[]
   template?: string
+  scoutFirst?: boolean
+  consensusModels?: string[]
   tokenBudget?: number
   contextOffloadThreshold: number
   progressReportIntervalMs: number
@@ -124,6 +126,13 @@ export interface VerificationResult {
   followUpPrompt?: string
   rawText: string
   tokensUsed?: number
+  model?: string
+  consensus?: {
+    totalModels: number
+    passVotes: number
+    failVotes: number
+    resolvedByCritic: boolean
+  }
 }
 
 export interface AdversarialReview {
@@ -209,15 +218,27 @@ export interface StoredWorkflowOptions {
   convergenceThreshold: number
   generateOrchestrationScript: boolean
   saveWorkflow: boolean
-    workflowName?: string
-    useWorktree: boolean
-    worktreeName?: string
-    schedule?: WorkflowSchedule
-    skills: string[]
-    template?: string
-    tokenBudget?: number
-    contextOffloadThreshold: number
-    progressReportIntervalMs: number
+  workflowName?: string
+  useWorktree: boolean
+  worktreeName?: string
+  schedule?: WorkflowSchedule
+  skills: string[]
+  template?: string
+  scoutFirst: boolean
+  consensusModels?: string[]
+  tokenBudget?: number
+  contextOffloadThreshold: number
+  progressReportIntervalMs: number
+}
+
+export interface ScoutFindings {
+  filePaths: string[]
+  dependencyGraph: Record<string, string[]>
+  testLocations: string[]
+  complexityEstimate: EffortLevel
+  summary: string
+  risks: string[]
+  recommendedPhases: string[]
 }
 
 export interface WorkflowState {

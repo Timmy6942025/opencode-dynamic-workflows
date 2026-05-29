@@ -356,7 +356,9 @@ export class DynamicWorkflowRunner {
         return this.completeTask(state.id, task.id, attempt.output ?? "", undefined)
       }
 
-      const verification = await this.verifyTask(state.id, phase, skilledTask, attempt.output ?? "", options)
+      const verification = options.consensusModels || Array.isArray(options.models.verifier)
+        ? await this.runConsensusVerification(state.id, phase, skilledTask, attempt.output ?? "", options)
+        : await this.verifyTask(state.id, phase, skilledTask, attempt.output ?? "", options)
       taskState = await this.attachVerification(state.id, task.id, verification)
 
       // Adversarial review
@@ -443,11 +445,12 @@ export class DynamicWorkflowRunner {
     task: AgentTask,
     output: string,
     options: DynamicWorkflowOptions,
+    modelOverride?: string,
   ): Promise<VerificationResult> {
     const sessionId = await this.client.createSession(`dw:${workflowId}:${task.id}:verify`)
     await this.store.mutateState(workflowId, (state) => { state.sessions.push(sessionId) })
     await this.client.initSession(sessionId)
-    const model = resolveModel("verifier", undefined, options.models)
+    const model = modelOverride ?? resolveModel("verifier", undefined, options.models)
     const result = await this.client.prompt(sessionId, buildVerifierPrompt(phase, task, output), {
       model,
       agent: "plan",
@@ -459,13 +462,126 @@ export class DynamicWorkflowRunner {
     const structured = result.structured as Record<string, unknown> | undefined
     const verification = coerceVerification(structured, result.text)
     verification.tokensUsed = tokensUsed
-    await this.event(workflowId, "task.verified", `Verified ${task.id}`, {
-      taskId: task.id,
-      pass: verification.pass,
-      confidence: verification.confidence,
-      tokensUsed,
-    })
+    verification.model = model
     return verification
+  }
+
+  private async runConsensusVerification(
+    workflowId: string,
+    phase: WorkflowPhase,
+    task: AgentTask,
+    output: string,
+    options: DynamicWorkflowOptions,
+  ): Promise<VerificationResult> {
+    const models = options.consensusModels ?? this.resolveVerifierModels(options)
+    if (models.length <= 1) {
+      return this.verifyTask(workflowId, phase, task, output, options)
+    }
+
+    await this.event(workflowId, "task.consensus.started", `Consensus verification for ${task.id}`, {
+      taskId: task.id,
+      models: models.length,
+    })
+
+    const results = await Promise.all(
+      models.map((model) => this.verifyTask(workflowId, phase, task, output, options, model)),
+    )
+
+    const passVotes = results.filter((r) => r.pass).length
+    const failVotes = results.length - passVotes
+    const total = results.length
+
+    // Consensus achieved: >= 2 agree
+    if (passVotes >= 2 && passVotes > failVotes) {
+      const best = results.filter((r) => r.pass).sort((a, b) => b.confidence - a.confidence)[0]
+      best.consensus = { totalModels: total, passVotes, failVotes, resolvedByCritic: false }
+      await this.event(workflowId, "task.consensus.passed", `Consensus passed for ${task.id}`, {
+        taskId: task.id,
+        passVotes,
+        failVotes,
+      })
+      return best
+    }
+
+    if (failVotes >= 2 && failVotes > passVotes) {
+      const worst = results.filter((r) => !r.pass).sort((a, b) => a.confidence - b.confidence)[0]
+      worst.consensus = { totalModels: total, passVotes, failVotes, resolvedByCritic: false }
+      await this.event(workflowId, "task.consensus.failed", `Consensus failed for ${task.id}`, {
+        taskId: task.id,
+        passVotes,
+        failVotes,
+      })
+      return worst
+    }
+
+    // Tie or unclear: invoke critic tiebreaker
+    const criticResult = await this.runCriticTiebreaker(workflowId, phase, task, output, results, options)
+    criticResult.consensus = { totalModels: total, passVotes, failVotes, resolvedByCritic: true }
+    await this.event(workflowId, "task.consensus.resolved", `Consensus resolved by critic for ${task.id}`, {
+      taskId: task.id,
+      passVotes,
+      failVotes,
+      resolvedByCritic: true,
+    })
+    return criticResult
+  }
+
+  private async runCriticTiebreaker(
+    workflowId: string,
+    phase: WorkflowPhase,
+    task: AgentTask,
+    output: string,
+    verifications: VerificationResult[],
+    options: DynamicWorkflowOptions,
+  ): Promise<VerificationResult> {
+    const sessionId = await this.client.createSession(`dw:${workflowId}:${task.id}:critic-tiebreaker`)
+    await this.store.mutateState(workflowId, (state) => { state.sessions.push(sessionId) })
+    await this.client.initSession(sessionId)
+    const model = resolveModel("critic", undefined, options.models)
+    const prompt = [
+      "You are the Critic agent. Multiple verifier models disagreed on whether the worker's output met the acceptance criteria.",
+      "",
+      `Task: ${task.title}`,
+      `Task prompt: ${task.prompt}`,
+      "",
+      "Acceptance criteria:",
+      ...task.acceptanceCriteria.map((c) => `  - ${c}`),
+      "",
+      "Worker output:",
+      truncate(output, 12_000),
+      "",
+      ...verifications.map((v, i) => [
+        `Verifier ${i + 1} (model: ${v.model ?? "unknown"}, pass: ${v.pass}, confidence: ${v.confidence}):`,
+        ...v.issues.map((issue) => `  - ${issue}`),
+        ...v.evidence.map((ev) => `  - Evidence: ${ev}`),
+        "",
+      ].join("\n")),
+      "",
+      "Analyze the evidence objectively. Resolve the conflict and determine if the final consensus should be a Pass or Fail.",
+      "Return the structured verification result.",
+    ].join("\n")
+
+    const result = await this.client.prompt(sessionId, prompt, {
+      model,
+      agent: "plan",
+      format: jsonSchema(VERIFICATION_SCHEMA, 2),
+    })
+    const tokensUsed = estimateTokens(result.text)
+    await this.accumulateTokens(workflowId, tokensUsed)
+    if (options.cleanUpSessions) await this.client.deleteSession(sessionId)
+    const structured = result.structured as Record<string, unknown> | undefined
+    const verification = coerceVerification(structured, result.text)
+    verification.tokensUsed = tokensUsed
+    verification.model = model
+    return verification
+  }
+
+  private resolveVerifierModels(options: DynamicWorkflowOptions): string[] {
+    const verifier = options.models.verifier
+    if (Array.isArray(verifier)) return verifier
+    if (typeof verifier === "string" && verifier) return [verifier]
+    if (options.models.default) return [options.models.default]
+    return ["openai/gpt-5.1-codex"]
   }
 
   private async runQualityGates(state: WorkflowState, phase: WorkflowPhase, options: DynamicWorkflowOptions): Promise<ShellResult[]> {

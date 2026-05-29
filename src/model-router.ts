@@ -2,7 +2,10 @@ import type { AgentTask, ModelRole, ModelRouterConfig } from "./types.js"
 import { isModelRole } from "./util.js"
 
 export function resolveModel(role: ModelRole, task: Pick<AgentTask, "model" | "role"> | undefined, models: ModelRouterConfig): string | undefined {
-  return task?.model ?? models[task?.role ?? role] ?? models[role] ?? models.default
+  const taskModel = task?.model
+  if (taskModel) return taskModel
+  const roleModel = models[task?.role ?? role] ?? models[role] ?? models.default
+  return typeof roleModel === "string" ? roleModel : undefined
 }
 
 export function parseModelFlag(value: string): { role: string; model: string } {

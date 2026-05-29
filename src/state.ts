@@ -114,6 +114,7 @@ export class FileWorkflowStore {
         useWorktree: options.useWorktree,
         skills: options.skills,
         template: options.template,
+        scoutFirst: options.scoutFirst ?? false,
         tokenBudget: options.tokenBudget,
         contextOffloadThreshold: options.contextOffloadThreshold,
         progressReportIntervalMs: options.progressReportIntervalMs,

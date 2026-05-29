@@ -26,6 +26,7 @@ export function defaultWorkflowOptions(objective: string, cwd = process.cwd()): 
     saveWorkflow: false,
     useWorktree: false,
     skills: [],
+    scoutFirst: false,
     contextOffloadThreshold: 200_000,
     progressReportIntervalMs: 60_000,
   }
@@ -60,6 +61,8 @@ export function optionsFromState(state: WorkflowState): DynamicWorkflowOptions {
     useWorktree: state.options.useWorktree,
     skills: state.options.skills,
     template: state.options.template,
+    scoutFirst: state.options.scoutFirst,
+    consensusModels: state.options.consensusModels,
     tokenBudget: state.options.tokenBudget,
     contextOffloadThreshold: state.options.contextOffloadThreshold,
     progressReportIntervalMs: state.options.progressReportIntervalMs,
@@ -68,6 +71,10 @@ export function optionsFromState(state: WorkflowState): DynamicWorkflowOptions {
 
 export function mergeModels(base: ModelRouterConfig, overrides: ModelRouterConfig): ModelRouterConfig {
   return Object.fromEntries(
-    Object.entries({ ...base, ...overrides }).filter(([, value]) => typeof value === "string" && value.length > 0),
+    Object.entries({ ...base, ...overrides }).filter(([, value]) => {
+      if (typeof value === "string" && value.length > 0) return true
+      if (Array.isArray(value) && value.length > 0) return true
+      return false
+    }),
   )
 }

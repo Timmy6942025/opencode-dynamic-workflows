@@ -185,21 +185,23 @@ async function skillsCommand(parsed: ParsedArgs): Promise<void> {
 }
 
 async function dashboardCommand(parsed: ParsedArgs): Promise<void> {
-  const { buildSnapshot, formatSnapshot } = await import("./dashboard.js")
+  const { startDashboardServer } = await import("./dashboard-server.js")
   const cwd = getStringFlag(parsed, "cwd") ?? process.cwd()
   const store = new FileWorkflowStore(cwd)
-  const state = parsed.positionals[0] ? await store.load(parsed.positionals[0]) : await store.loadLatest()
-  const snapshot = await buildSnapshot(store, state.id)
-  if (!snapshot) {
-    process.stderr.write("Failed to build dashboard snapshot.\n")
-    process.exitCode = 1
-    return
-  }
-  if (parsed.flags.json) {
-    process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`)
-    return
-  }
-  process.stdout.write(formatSnapshot(snapshot) + "\n")
+  const port = getNumberFlag(parsed, "port", 4097)
+  const server = await startDashboardServer({ port, store })
+  const url = `http://localhost:${port}`
+  process.stdout.write(`Dashboard server running at ${url}\n`)
+  process.stdout.write(`Press Ctrl+C to stop\n`)
+  // Keep process alive until interrupted
+  await new Promise<void>((resolve) => {
+    process.on("SIGINT", () => {
+      server.close(() => resolve())
+    })
+    process.on("SIGTERM", () => {
+      server.close(() => resolve())
+    })
+  })
 }
 
 async function installCommand(parsed: ParsedArgs): Promise<void> {
@@ -283,6 +285,10 @@ function buildOptions(objective: string, parsed: ParsedArgs): DynamicWorkflowOpt
   const skills = getArrayFlag(parsed, "skill")
   if (skills.length) options.skills = skills
 
+  if (parsed.flags["scout-first"]) options.scoutFirst = true
+  const consensusModels = getStringFlag(parsed, "consensus-models")
+  if (consensusModels) options.consensusModels = consensusModels.split(",").map((m) => m.trim())
+
   return options
 }
 
@@ -332,6 +338,10 @@ function buildResumeOptions(existing: WorkflowState, parsed: ParsedArgs): Dynami
   if (template) options.template = template
   const skills = getArrayFlag(parsed, "skill")
   if (skills.length) options.skills = skills
+
+  if (parsed.flags["scout-first"]) options.scoutFirst = true
+  const consensusModels = getStringFlag(parsed, "consensus-models")
+  if (consensusModels) options.consensusModels = consensusModels.split(",").map((m) => m.trim())
 
   return options
 }
@@ -472,6 +482,8 @@ Options:
   --orchestration-mode <static|dynamic> Orchestration strategy (default static)
   --template <id>                 Use a built-in workflow template
   --skill <id>                      Apply a skill constraint (repeatable)
+  --scout-first                     Run scout phase before planning (auto-enabled for high/ultra effort)
+  --consensus-models <models>       Comma-separated verifier models for consensus (e.g., "openai/gpt-5.1-codex,anthropic/claude-sonnet-4-5")
   --save-workflow                   Save completed workflow as reusable template
   --workflow-name <name>            Name for saved workflow
   --use-worktree                    Run in a git worktree for isolation

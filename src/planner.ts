@@ -2,6 +2,29 @@ import type { AgentTask, DynamicWorkflowOptions, ModelRole, WorkflowClient, Work
 import { resolveModel } from "./model-router.js"
 import { coerceStringArray, jsonSchema, slugify, stableId } from "./util.js"
 
+const SCOUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    filePaths: { type: "array", items: { type: "string" }, description: "Concrete file paths relevant to the objective." },
+    dependencyGraph: {
+      type: "object",
+      additionalProperties: { type: "array", items: { type: "string" } },
+      description: "Map of file paths to their direct dependencies.",
+    },
+    testLocations: { type: "array", items: { type: "string" }, description: "Paths to test files that cover relevant code." },
+    complexityEstimate: {
+      type: "string",
+      enum: ["low", "medium", "high", "ultra"],
+      description: "Estimated complexity of the objective.",
+    },
+    summary: { type: "string", description: "Concise summary of codebase state relevant to the objective." },
+    risks: { type: "array", items: { type: "string" }, description: "Potential risks or blockers." },
+    recommendedPhases: { type: "array", items: { type: "string" }, description: "Suggested phase breakdown." },
+  },
+  required: ["filePaths", "complexityEstimate", "summary", "risks", "recommendedPhases"],
+}
+
 const PLAN_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -75,10 +98,23 @@ export async function createDynamicPlan(client: WorkflowClient, options: Dynamic
     return planTemplate
   }
 
+  // Scout-first planning: run scout agents to map codebase before planning
+  let scoutFindings: import("./types.js").ScoutFindings | undefined
+  if (options.scoutFirst || options.effortLevel === "high" || options.effortLevel === "ultra") {
+    try {
+      scoutFindings = await runScoutPhase(client, options)
+    } catch {
+      // Scout failure is non-fatal; planner will proceed without findings
+    }
+  }
+
   const sessionId = await client.createSession("dynamic-workflow-planner")
   await client.initSession(sessionId)
   const model = resolveModel("planner", undefined, options.models)
-  const result = await client.prompt(sessionId, buildPlannerPrompt(options), {
+  const promptText = scoutFindings
+    ? `${buildPlannerPrompt(options)}\n\n--- Scout Findings ---\n${formatScoutFindings(scoutFindings)}`
+    : buildPlannerPrompt(options)
+  const result = await client.prompt(sessionId, promptText, {
     model,
     agent: "plan",
     format: jsonSchema(PLAN_SCHEMA, 3),
@@ -219,6 +255,106 @@ function normalizeVerification(value: unknown): { strategy: string; sampleSize?:
 function normalizeTaskRole(value: unknown): ModelRole {
   if (value === "scout" || value === "critic" || value === "adversary") return value
   return "worker"
+}
+
+async function runScoutPhase(client: WorkflowClient, options: DynamicWorkflowOptions): Promise<import("./types.js").ScoutFindings> {
+  const sessionId = await client.createSession("dynamic-workflow-scout")
+  await client.initSession(sessionId)
+  const model = resolveModel("scout", undefined, options.models)
+  const result = await client.prompt(sessionId, buildScoutPrompt(options), {
+    model,
+    agent: "explore",
+    format: jsonSchema(SCOUT_SCHEMA, 2),
+  })
+  if (options.cleanUpSessions) await client.deleteSession(sessionId)
+
+  const structured = result.structured as Record<string, unknown> | undefined
+  if (!structured) {
+    return {
+      filePaths: [],
+      dependencyGraph: {},
+      testLocations: [],
+      complexityEstimate: "medium",
+      summary: result.text?.slice(0, 2000) ?? "",
+      risks: [],
+      recommendedPhases: ["survey", "execute", "verify"],
+    }
+  }
+
+  const filePaths = Array.isArray(structured.filePaths)
+    ? structured.filePaths.filter((f): f is string => typeof f === "string")
+    : []
+  const dependencyGraph: Record<string, string[]> = {}
+  if (structured.dependencyGraph && typeof structured.dependencyGraph === "object") {
+    for (const [key, value] of Object.entries(structured.dependencyGraph)) {
+      if (Array.isArray(value)) {
+        dependencyGraph[key] = value.filter((v): v is string => typeof v === "string")
+      }
+    }
+  }
+  const testLocations = Array.isArray(structured.testLocations)
+    ? structured.testLocations.filter((f): f is string => typeof f === "string")
+    : []
+  const risks = Array.isArray(structured.risks)
+    ? structured.risks.filter((r): r is string => typeof r === "string")
+    : []
+  const recommendedPhases = Array.isArray(structured.recommendedPhases)
+    ? structured.recommendedPhases.filter((p): p is string => typeof p === "string")
+    : []
+
+  return {
+    filePaths,
+    dependencyGraph,
+    testLocations,
+    complexityEstimate: (String(structured.complexityEstimate) as import("./types.js").EffortLevel) || "medium",
+    summary: String(structured.summary || ""),
+    risks,
+    recommendedPhases,
+  }
+}
+
+function buildScoutPrompt(options: DynamicWorkflowOptions): string {
+  return [
+    "You are a codebase scout for an OpenCode dynamic workflow.",
+    "Your job is to map the codebase to inform a planner that will decompose work into agent tasks.",
+    "",
+    `Objective: ${options.objective}`,
+    `Working directory: ${options.cwd}`,
+    "",
+    "Scout rules:",
+    "- Use OpenCode file and find tools to explore the codebase.",
+    "- Identify concrete file paths relevant to the objective.",
+    "- Map dependency relationships between key files.",
+    "- Locate test files that cover relevant code.",
+    "- Estimate complexity (low/medium/high/ultra).",
+    "- Note risks, blockers, and recommended phase breakdown.",
+    "- Do not make changes to the codebase.",
+    "",
+    "Return findings using the structured schema.",
+  ].join("\n")
+}
+
+function formatScoutFindings(findings: import("./types.js").ScoutFindings): string {
+  const lines = [
+    `Complexity: ${findings.complexityEstimate}`,
+    `Summary: ${findings.summary}`,
+    "",
+    "Files:",
+    ...findings.filePaths.map((f) => `  - ${f}`),
+    "",
+    "Tests:",
+    ...findings.testLocations.map((t) => `  - ${t}`),
+    "",
+    "Risks:",
+    ...findings.risks.map((r) => `  - ${r}`),
+    "",
+    "Recommended phases:",
+    ...findings.recommendedPhases.map((p) => `  - ${p}`),
+    "",
+    "Dependencies:",
+    ...Object.entries(findings.dependencyGraph).map(([file, deps]) => `  ${file} → ${deps.join(", ")}`),
+  ]
+  return lines.join("\n")
 }
 
 function estimatePlanTokens(plan: WorkflowPlan): number {
