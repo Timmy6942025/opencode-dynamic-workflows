@@ -1,7 +1,7 @@
 {
   "name": "oc-dw",
-  "version": "0.2.3",
-  "description": "Seamless dynamic workflow orchestration for OpenCode. One command, zero config.",
+  "version": "0.3.0",
+  "description": "Seamless dynamic workflow orchestration for OpenCode. Install, setup, use inside OpenCode.",
   "type": "module",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
@@ -21,13 +21,11 @@
   },
   "files": [
     "dist/src",
-    "dist/dashboard",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "build:dashboard": "cd dashboard && npx vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test dist/test/*.test.js",
     "qa": "npm run build && node --test dist/test/*.test.js",
@@ -39,16 +37,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "@vitejs/plugin-react": "^4.4.0",
-    "autoprefixer": "^10.5.0",
-    "clsx": "^2.1.0",
-    "postcss": "^8.5.15",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "tailwind-merge": "^3.0.0",
-    "tailwindcss": "^3.4.19",
-    "typescript": "^5.7.0",
-    "vite": "^6.0.0"
+    "typescript": "^5.7.0"
   },
   "engines": {
     "node": ">=20"

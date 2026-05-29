@@ -1,8 +1,8 @@
 # oc-dw — OpenCode Dynamic Workflows
 
-Seamless dynamic workflow orchestration for OpenCode. One command, zero config.
+> Claude Dynamic Workflows, but for OpenCode. Install once, use inside OpenCode forever.
 
-Inspired by Claude Dynamic Workflows and OpenAI Codex `/goal`, `oc-dw` lets OpenCode users launch high-effort workflows that **plan**, **fan out**, **coordinate**, **verify**, **resume**, and **summarize** many OpenCode subagent sessions across a codebase. Every model is an OpenCode `provider/model` id — use Claude, GPT, Gemini, Kimi, DeepSeek, Grok, local models, or any provider configured in OpenCode.
+`oc-dw` brings multi-agent workflow orchestration directly into OpenCode. No separate CLI to run, no servers to manage, no dashboard to open. Just tell OpenCode what you want done and it plans, fans out, verifies, and synthesizes — exactly like Claude Code's built-in dynamic workflows.
 
 ## Install
 
@@ -10,230 +10,97 @@ Inspired by Claude Dynamic Workflows and OpenAI Codex `/goal`, `oc-dw` lets Open
 npm i -g oc-dw
 ```
 
-That's it. The CLI `oc-dw` is now available globally, and the OpenCode plugin is ready to configure.
+## Setup
 
-### Zero-Config Plugin Setup
+One command wires everything into OpenCode:
 
 ```bash
 oc-dw setup
 ```
 
-This adds `oc-dw` to your OpenCode config. Restart OpenCode and the `dynamic_workflow_run` tool is available automatically. No `opencode.json` editing required.
+This does three things automatically:
+1. Adds `"oc-dw"` to your `opencode.json` plugin list
+2. Installs the `/workflow` custom command
+3. Installs the `/ultrawork` custom command
 
-### Quick Start
-
-```bash
-oc-dw run "Refactor the auth layer to use JWT tokens instead of sessions" \
-  --concurrency 8 \
-  --max-agents 50
-```
+Restart OpenCode. Done.
 
 ## Usage
 
-Run OpenCode's server/TUI in the project you want to operate on, then launch a workflow:
+Inside OpenCode, just ask:
 
-```bash
-oc-dw run "Refactor the auth layer to use JWT tokens instead of sessions" \
-  --concurrency 8 \
-  --max-agents 50
+```
+/workflow Refactor the auth layer to use JWT tokens instead of sessions
 ```
 
-Check progress:
+Or for fire-and-forget mode that runs until completion:
 
-```bash
-oc-dw status
-oc-dw dashboard
-oc-dw list
+```
+/ultrawork Add comprehensive test coverage for the payment module
 ```
 
-Resume or abort:
+That's it. The agent calls `dynamic_workflow_run` behind the scenes, which:
 
-```bash
-oc-dw resume <workflow-id>
-oc-dw abort <workflow-id>
-oc-dw pause <workflow-id>
+1. **Plans** — Generates phases, tasks, dependencies, and model routing
+2. **Fans out** — Spawns isolated worker sessions with scoped prompts
+3. **Verifies** — Independent verifiers check results against acceptance criteria
+4. **Synthesizes** — Merges all outputs into a final report
+5. **Checkpoints** — File-backed state so workflows are resumable
+
+Artifacts are stored under `.opencode/dynamic-workflows/runs/<workflow-id>/`.
+
+## What it does
+
+| Feature | What it means |
+|--------|---------------|
+| **Planning** | LLM generates a structured plan with phases, tasks, dependencies, model roles, and quality gates |
+| **DAG execution** | Tasks run in dependency order with bounded concurrency |
+| **Multi-round verification** | Independent verifier agents check every result |
+| **Adversarial review** | Critic and adversary agents debate results with convergence detection |
+| **Skill constraints** | Apply reusable rules like `test-driven`, `security-first`, `strict-types` to all workers |
+| **Templates** | Built-in templates for `deep-research`, `codebase-audit`, `large-migration`, `test-generation`, `documentation-update` |
+| **Resumable** | File-backed checkpoints keep state across restarts |
+| **Model-agnostic** | Route any role to any OpenCode provider/model |
+
+## Customizing workflows
+
+The agent picks defaults automatically, but you can be explicit:
+
+```
+Run a dynamic workflow with:
+- template: deep-research
+- skill: security-first
+- skill: test-driven
+- adversarial_review: true
+- effort: ultra
+- stopping_condition: "All findings are cross-referenced with source code and documented in FINDINGS.md"
 ```
 
-## CLI Commands
+Available templates:
+- `deep-research` — Multi-angle investigation with cross-checking
+- `codebase-audit` — Systematic security/quality audit
+- `large-migration` — Framework/language migration with parity verification
+- `test-generation` — Comprehensive test generation with edge cases
+- `documentation-update` — Doc update/generation for a codebase
 
-| Command | Description |
-|---------|-------------|
-| `oc-dw run "<objective>"` | Start a new workflow |
-| `oc-dw resume [id]` | Resume a paused or failed workflow |
-| `oc-dw status [id]` | Show workflow state and task summary |
-| `oc-dw list` | List all workflows |
-| `oc-dw abort [id]` | Abort a running workflow |
-| `oc-dw pause [id]` | Pause a running workflow |
-| `oc-dw approve [id]` | Approve a workflow awaiting approval |
-| `oc-dw reject [id]` | Reject a workflow awaiting approval |
-| `oc-dw templates` | List built-in workflow templates |
-| `oc-dw skills` | List built-in skill constraints |
-| `oc-dw dashboard [id]` | Show real-time progress dashboard |
-| `oc-dw install-command` | Install the `/workflow` command in OpenCode |
-
-## CLI Options
-
-### Core Options
-- `--cwd <path>` — Project directory (default: `.`)
-- `--base-url <url>` — OpenCode server URL (default: `http://localhost:4096`)
-- `--start-server` — Start an OpenCode server through the SDK
-- `--concurrency <n>` — Concurrent OpenCode sessions (default: 16)
-- `--max-agents <n>` — Max worker tasks in the plan (default: 1000)
-- `--verification-rounds <n>` — Verifier sessions per task (default: 1)
-- `--retry-limit <n>` — Retries after failed worker/verification (default: 1)
-- `--dry-run` — Plan and checkpoint without executing
-- `--cleanup` — Delete OpenCode sessions after collecting outputs
-- `--json` — Emit JSON logs/results
-- `--no-fail-fast` — Continue on task/phase failures
-
-### Model Routing
-- `--model role=provider/model` — Generic role model override
-- `--planner-model <provider/model>`
-- `--worker-model <provider/model>`
-- `--verifier-model <provider/model>`
-- `--synthesizer-model <provider/model>`
-- `--critic-model <provider/model>`
-- `--scout-model <provider/model>`
-
-### Workflow Features
-- `--stopping-condition <text>` — Explicit stopping condition / verifiable end state
-- `--effort <low|medium|high|ultra>` — Effort level (default: high)
-- `--permission-mode <full|plan|ask>` — Permission mode (default: full)
-- `--require-approval` — Require human approval before executing plan
-- `--adversarial-review` — Enable adversarial review with convergence detection
-- `--convergence-threshold <n>` — Adversarial convergence threshold 0–1 (default: 0.75)
-- `--generate-orchestration-script` — Generate a dynamic orchestration script from the plan
-- `--orchestration-mode <static|dynamic>` — Orchestration strategy (default: static)
-
-### Templates & Skills
-- `--template <id>` — Use a built-in workflow template (`deep-research`, `codebase-audit`, `large-migration`, `test-generation`, `documentation-update`)
-- `--skill <id>` — Apply a skill constraint, repeatable (`no-casts`, `test-driven`, `minimal-diff`, `strict-types`, `security-first`, `performance-aware`, `docs-required`, `backward-compat`)
-
-### Execution Control
-- `--save-workflow` — Save completed workflow as a reusable template
-- `--workflow-name <name>` — Name for saved workflow
-- `--use-worktree` — Run in a git worktree for isolation
-- `--worktree-name <name>` — Name for the worktree
-- `--token-budget <n>` — Maximum token budget for this workflow
-- `--context-offload-threshold <n>` — Char threshold for context offloading (default: 200000)
-- `--progress-interval-ms <n>` — Progress report interval in ms (default: 60000)
-
-## Built-In Templates
-
-Templates provide pre-configured plans and options for common workflow types:
-
-- **`deep-research`** — Multi-angle investigation with adversarial cross-checking and comprehensive synthesis
-- **`codebase-audit`** — Systematic security/quality audit with up to 100 agents
-- **`large-migration`** — Framework/language migration with parity verification
-- **`test-generation`** — Comprehensive test generation with edge case coverage
-- **`documentation-update`** — Documentation update/generation for a codebase
-
-Use a template:
-
-```bash
-oc-dw run "Research the best state management library for React in 2025" \
-  --template deep-research \
-  --adversarial-review
-```
-
-## Built-In Skills
-
-Skills apply reusable constraints to all worker tasks:
-
-- **`no-casts`** — Prohibit any type assertions or `any` casts
-- **`test-driven`** — Require tests for every change
-- **`minimal-diff`** — Make the smallest possible change
-- **`strict-types`** — Enforce TypeScript strict mode compliance
-- **`security-first`** — Evaluate all changes for security implications
-- **`performance-aware`** — Consider algorithmic complexity and I/O efficiency
-- **`docs-required`** — Document all public APIs and significant changes
-- **`backward-compat`** — Maintain backward compatibility
-
-Apply skills:
-
-```bash
-oc-dw run "Add OAuth2 login support" \
-  --skill security-first \
-  --skill test-driven \
-  --skill docs-required
-```
-
-## Features
-
-### Planning & Orchestration
-- **Structured planning** — LLM generates phases, tasks, dependencies, model roles, verification strategy, and quality gates via JSON schema
-- **Dynamic orchestration scripts** — Optional generation of runnable TypeScript orchestration scripts
-- **Template plans** — Built-in templates can bypass LLM planning entirely for known workflow patterns
-
-### Execution
-- **DAG execution** — Tasks run in dependency order with bounded concurrency
-- **Quality gates** — Shell commands verify phase completion
-- **Resumable** — File-backed checkpoints (`state.json`, `events.jsonl`, `plan.json`, `summary.md`)
-- **Worktree isolation** — Run workflows in isolated git worktrees
-
-### Quality Assurance
-- **Multi-round verification** — Independent verifier agents check results against acceptance criteria
-- **Adversarial review** — Critic and adversary agents debate results with convergence detection
-- **Skill constraints** — Reusable prompt templates enforce coding standards across all tasks
-
-### Observability
-- **Token tracking** — Tracks estimated token usage across all sessions
-- **Progress reports** — Periodic checkpoint reports generated during execution
-- **Real-time dashboard** — CLI dashboard showing progress, blockers, and recent events
-- **Approval gates** — Human-in-the-loop approval before workflow execution
-
-### Integration
-- **OpenCode Plugin** — Exposes `dynamic_workflow_run` tool for background execution
-- **CLI** — Full command-line interface with JSON output support
-- **Model-agnostic** — Route any role to any OpenCode provider/model
-
-## Artifacts
-
-Workflow artifacts are stored under:
-
-```text
-.opencode/dynamic-workflows/runs/<workflow-id>/
-  state.json
-  plan.json
-  events.jsonl
-  summary.md
-  approval-request.md
-  progress-<checkpoint>.md
-  cached-results/
-```
-
-## OpenCode Plugin
-
-Add the plugin to `opencode.json`:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-dynamic-workflows/plugin"]
-}
-```
-
-The plugin exposes a `dynamic_workflow_run` tool. You can also install a command:
-
-```bash
-oc-dw install-command --cwd .
-```
-
-Then run `/workflow <objective>` in OpenCode. The command asks the active agent to launch the plugin tool in the background.
+Available skills:
+- `no-casts` — Prohibit type assertions or `any`
+- `test-driven` — Require tests for every change
+- `minimal-diff` — Smallest possible change
+- `strict-types` — Enforce TypeScript strict mode
+- `security-first` — Evaluate all changes for security
+- `performance-aware` — Consider complexity and I/O efficiency
+- `docs-required` — Document all public APIs
+- `backward-compat` — Maintain backward compatibility
 
 ## Architecture
 
-- **Planner session** — Uses structured output to create phases, tasks, dependencies, model roles, verification strategy, and quality gates.
-- **Worker sessions** — Each task runs in an isolated OpenCode session with its own context. Skills are applied to task prompts before execution.
-- **Verifier sessions** — Independent verifier agents check worker results against acceptance criteria and can trigger retries.
-- **Adversarial sessions** — Critic and adversary reviewers cross-check findings with convergence detection.
-- **Quality gates** — Planned shell commands run through OpenCode sessions and are recorded as evidence.
-- **Synthesizer sessions** — Large result sets are chunked, summarized, then merged into one final report with agent-id references. Context offloading prevents token limit overflow.
-- **State store** — File-backed checkpoints keep the workflow resumable and inspectable.
-
-The default limits are deliberately conservative: 16 concurrent agents and 1,000 maximum total tasks. You can lower or raise both at run time.
-
-See [docs/architecture.md](docs/architecture.md) for the runtime design and [docs/research-notes.md](docs/research-notes.md) for the source-derived implementation requirements.
+- **Planner** — Uses structured output to create the workflow plan
+- **Workers** — Each task runs in an isolated OpenCode session with scoped context
+- **Verifiers** — Independent agents check against acceptance criteria
+- **Adversaries** — Cross-check findings with convergence detection
+- **Synthesizer** — Chunks and merges results into a final report
+- **State store** — File-backed for resumability and inspection
 
 ## Development
 

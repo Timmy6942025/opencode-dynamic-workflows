@@ -3,11 +3,10 @@ import { tool } from "@opencode-ai/plugin"
 
 import { SdkLikeWorkflowClient } from "./client.js"
 import { defaultWorkflowOptions } from "./options.js"
-import { ConsoleReporter, SilentReporter } from "./reporter.js"
+import { ConsoleReporter } from "./reporter.js"
 import { DynamicWorkflowRunner } from "./runner.js"
 import { FileWorkflowStore } from "./state.js"
 import type { WorkflowState } from "./types.js"
-import { toErrorMessage } from "./util.js"
 
 function normalizeWorkflowArgs(args: unknown): Record<string, unknown> {
   if (!args || typeof args !== "object") {
@@ -115,17 +114,7 @@ export const DynamicWorkflowsPlugin: Plugin = async (ctx) => {
         },
       }),
     },
-    event: async ({ event }) => {
-      if (event.type === "session.idle") {
-        await ctx.client.app.log({
-          body: {
-            service: "oc-dw",
-            level: "debug",
-            message: "OpenCode session idle while dynamic workflow plugin is loaded",
-          },
-        })
-      }
-    },
+
   }
 }
 
