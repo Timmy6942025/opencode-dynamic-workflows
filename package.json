@@ -1,6 +1,6 @@
 {
   "name": "oc-dw",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Seamless dynamic workflow orchestration for OpenCode. One command, zero config.",
   "type": "module",
   "main": "./dist/src/index.js",

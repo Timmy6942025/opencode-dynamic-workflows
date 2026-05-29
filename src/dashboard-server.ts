@@ -1,9 +1,10 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http"
-import { readFile, stat, readdir } from "node:fs/promises"
+import { readFile, stat } from "node:fs/promises"
 import { join, extname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { FileWorkflowStore } from "./state.js"
-import { buildSnapshot } from "./dashboard.js"
+import { checkPortOpen, parseHostPort } from "./net-util.js"
+import { getServerStatus } from "./server-status.js"
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url))
 
@@ -24,11 +25,13 @@ const MIME: Record<string, string> = {
 export interface DashboardServerOptions {
   port?: number
   store: FileWorkflowStore
+  baseUrl?: string
 }
 
 export async function startDashboardServer(options: DashboardServerOptions): Promise<Server> {
   const port = options.port ?? 4097
   const store = options.store
+  const baseUrl = options.baseUrl ?? "http://localhost:4096"
   const staticDir = resolve(__dirname, "../../dist/dashboard")
 
   // SSE clients per workflow
@@ -55,6 +58,28 @@ export async function startDashboardServer(options: DashboardServerOptions): Pro
     if (req.method === "OPTIONS") {
       res.writeHead(204)
       res.end()
+      return
+    }
+
+    // API: Health / server status
+    if (pathname === "/api/health") {
+      try {
+        const { host, port: ocPort } = parseHostPort(baseUrl)
+        const reachable = await checkPortOpen(host, ocPort, 2_000)
+        const status = getServerStatus()
+        res.writeHead(200, { "Content-Type": "application/json" })
+        res.end(JSON.stringify({
+          connected: reachable,
+          baseUrl,
+          stage: status.stage,
+          message: status.message,
+          elapsedMs: status.elapsedMs,
+          error: status.error,
+        }))
+      } catch (e) {
+        res.writeHead(500, { "Content-Type": "application/json" })
+        res.end(JSON.stringify({ error: String(e) }))
+      }
       return
     }
 

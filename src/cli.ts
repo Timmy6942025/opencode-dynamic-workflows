@@ -189,7 +189,8 @@ async function dashboardCommand(parsed: ParsedArgs): Promise<void> {
   const cwd = getStringFlag(parsed, "cwd") ?? process.cwd()
   const store = new FileWorkflowStore(cwd)
   const port = getNumberFlag(parsed, "port", 4097)
-  const server = await startDashboardServer({ port, store })
+  const baseUrl = getStringFlag(parsed, "base-url") ?? getStringFlag(parsed, "baseUrl")
+  const server = await startDashboardServer({ port, store, baseUrl: baseUrl ?? undefined })
   const url = `http://localhost:${port}`
   process.stdout.write(`Dashboard server running at ${url}\n`)
   process.stdout.write(`Press Ctrl+C to stop\n`)

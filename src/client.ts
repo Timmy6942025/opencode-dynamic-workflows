@@ -1,7 +1,7 @@
-import { connect } from "node:net"
-
 import type { ClientPromptOptions, PromptResult, ShellResult, WorkflowClient } from "./types.js"
 import { promptResultFromRaw, splitModelId, unwrapResponse } from "./util.js"
+import { checkPortOpen, parseHostPort, sleep } from "./net-util.js"
+import { updateServerStatus } from "./server-status.js"
 
 interface RawOpencodeServer {
   close(): Promise<void> | void
@@ -16,42 +16,6 @@ export interface CreateWorkflowClientOptions {
   config?: Record<string, unknown>
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-async function checkPortOpen(host: string, port: number, timeoutMs = 3_000): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = connect(port, host)
-    let done = false
-    const finish = (open: boolean) => {
-      if (done) return
-      done = true
-      try { socket.destroy() } catch { /* ignore */ }
-      resolve(open)
-    }
-    socket.on("connect", () => finish(true))
-    socket.on("error", () => finish(false))
-    socket.on("timeout", () => finish(false))
-    socket.setTimeout(timeoutMs)
-    setTimeout(() => finish(false), timeoutMs + 500)
-  })
-}
-
-function parseHostPort(baseUrl: string): { host: string; port: number } {
-  let urlStr = baseUrl.trim()
-  // Handle bare host:port strings (e.g., "localhost:4097" or "127.0.0.1:4096")
-  if (!urlStr.includes("://")) {
-    urlStr = `http://${urlStr}`
-  }
-  try {
-    const url = new URL(urlStr)
-    return { host: url.hostname, port: Number(url.port) || 4096 }
-  } catch {
-    return { host: "127.0.0.1", port: 4096 }
-  }
-}
-
 async function tryStartServer(
   sdk: any,
   options: CreateWorkflowClientOptions,
@@ -60,6 +24,7 @@ async function tryStartServer(
   const port = options.port ?? 4096
   const baseUrl = options.baseUrl ?? `http://${hostname}:${port}`
 
+  updateServerStatus({ stage: "starting", message: `Auto-starting OpenCode server at ${baseUrl}...`, baseUrl, startedAt: Date.now() })
   process.stderr.write(`[oc-dw] No OpenCode server found at ${baseUrl}. Auto-starting local server...\n`)
   try {
     const instance = await sdk.createOpencode({
@@ -70,18 +35,22 @@ async function tryStartServer(
     })
 
     // Poll until the port accepts connections (up to 5s)
+    updateServerStatus({ stage: "polling", message: `Waiting for server to become ready at ${baseUrl}...`, baseUrl })
     const { host, port: p } = parseHostPort(baseUrl)
     for (let i = 0; i < 25; i++) {
       if (await checkPortOpen(host, p, 300)) {
+        updateServerStatus({ stage: "ready", message: `OpenCode server ready at ${baseUrl}`, baseUrl })
         process.stderr.write(`[oc-dw] OpenCode server ready at ${baseUrl}\n`)
         return { client: instance.client, server: instance.server, baseUrl }
       }
       await sleep(200)
     }
+    updateServerStatus({ stage: "ready", message: `OpenCode server at ${baseUrl} started (port check timed out but proceeding)`, baseUrl })
     process.stderr.write(`[oc-dw] Warning: server started but port did not become ready within 5s. Proceeding anyway.\n`)
     return { client: instance.client, server: instance.server, baseUrl }
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
+    updateServerStatus({ stage: "failed", message: `Failed to auto-start server at ${baseUrl}: ${msg}`, baseUrl, error: msg })
     throw new Error(
       `Failed to auto-start OpenCode server at ${baseUrl}.\n` +
         `Reason: ${msg}\n` +
@@ -102,9 +71,11 @@ export async function createWorkflowClient(options: CreateWorkflowClientOptions)
     return new SdkLikeWorkflowClient(client, server, options.directory, actualBaseUrl)
   }
 
+  updateServerStatus({ stage: "checking", message: `Checking reachability of ${baseUrl}...`, baseUrl, startedAt: Date.now() })
   const { host, port } = parseHostPort(baseUrl)
   const reachable = await checkPortOpen(host, port)
   if (reachable) {
+    updateServerStatus({ stage: "ready", message: `OpenCode server connected at ${baseUrl}`, baseUrl })
     const client = sdk.createOpencodeClient({
       baseUrl,
       throwOnError: true,
@@ -115,6 +86,7 @@ export async function createWorkflowClient(options: CreateWorkflowClientOptions)
   }
 
   if (options.startServer === false) {
+    updateServerStatus({ stage: "failed", message: `No OpenCode server reachable at ${baseUrl}`, baseUrl })
     throw new Error(
       `No OpenCode server reachable at ${baseUrl} and --start-server was not set.\n` +
         `Start a server with \`opencode start\` or pass --start-server to auto-start.`,

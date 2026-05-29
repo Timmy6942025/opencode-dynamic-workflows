@@ -10,6 +10,8 @@ export { BUILT_IN_TEMPLATES, resolveTemplate, applyTemplate, listTemplates } fro
 export { resolveSkills, listSkills, applySkillsToTask, applySkillsToOptions } from "./skills.js"
 export { buildSnapshot, formatSnapshot } from "./dashboard.js"
 export { startDashboardServer } from "./dashboard-server.js"
+export { checkPortOpen, parseHostPort } from "./net-util.js"
+export { getServerStatus, updateServerStatus, resetServerStatus } from "./server-status.js"
 export { createWorktree, cleanupWorktree, listWorktrees } from "./worktree.js"
 export { parseSchedule, shouldRunNow, scheduleWorkflow, updateScheduleLastRun } from "./scheduler.js"
 export type * from "./types.js"

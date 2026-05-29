@@ -29,6 +29,15 @@ interface WorkflowSummary {
   totalTokensUsed: number
 }
 
+interface ServerHealth {
+  connected: boolean
+  baseUrl: string
+  stage: string
+  message: string
+  elapsedMs?: number
+  error?: string
+}
+
 function useWorkflowData() {
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>([])
   const [selectedWorkflow, setSelectedWorkflow] = useState<WorkflowState | null>(null)
@@ -93,8 +102,66 @@ function useWorkflowData() {
   return { workflows, selectedWorkflow, events, error, loading, fetchWorkflow, fetchWorkflows }
 }
 
+function useServerHealth(pollIntervalMs = 3_000) {
+  const [health, setHealth] = useState<ServerHealth | null>(null)
+  const [healthError, setHealthError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const fetchHealth = async () => {
+      try {
+        const res = await fetch('./api/health')
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+        if (!cancelled) {
+          setHealth(data)
+          setHealthError(null)
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setHealth(null)
+          setHealthError(e instanceof Error ? e.message : String(e))
+        }
+      }
+    }
+    fetchHealth()
+    const interval = setInterval(fetchHealth, pollIntervalMs)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [pollIntervalMs])
+
+  return { health, healthError }
+}
+
+function serverStageColor(stage?: string): string {
+  switch (stage) {
+    case 'ready': return 'bg-emerald-500'
+    case 'checking': return 'bg-amber-400 animate-pulse'
+    case 'starting': return 'bg-amber-400 animate-pulse'
+    case 'polling': return 'bg-blue-400 animate-pulse'
+    case 'failed': return 'bg-red-500'
+    case 'idle': return 'bg-slate-300'
+    default: return 'bg-slate-300'
+  }
+}
+
+function serverStageText(stage?: string): string {
+  switch (stage) {
+    case 'ready': return 'Connected'
+    case 'checking': return 'Checking...'
+    case 'starting': return 'Starting...'
+    case 'polling': return 'Waiting...'
+    case 'failed': return 'Failed'
+    case 'idle': return 'Idle'
+    default: return 'Unknown'
+  }
+}
+
 export default function App() {
   const { workflows, selectedWorkflow, events, error, loading, fetchWorkflow } = useWorkflowData()
+  const { health, healthError } = useServerHealth()
   const [activeTab, setActiveTab] = useState<'overview' | 'tasks' | 'events' | 'artifacts'>('overview')
 
   if (loading) {
@@ -127,6 +194,34 @@ export default function App() {
           <h1 className="text-lg font-bold tracking-tight">oc-dw</h1>
           <p className="text-xs text-muted-foreground">Dynamic Workflows</p>
         </div>
+
+        {/* Server status */}
+        <div className="px-4 py-3 border-b border-border bg-muted/30">
+          <div className="flex items-center gap-2 mb-1">
+            <span className={cn('h-2.5 w-2.5 rounded-full flex-shrink-0', serverStageColor(health?.stage))} />
+            <span className="text-xs font-medium text-foreground">
+              {healthError ? 'Dashboard API unreachable' : serverStageText(health?.stage)}
+            </span>
+          </div>
+          {health && (
+            <div className="space-y-0.5">
+              <p className="text-[11px] text-muted-foreground truncate" title={health.baseUrl}>
+                {health.baseUrl}
+              </p>
+              {health.elapsedMs && health.elapsedMs > 0 && (health.stage === 'checking' || health.stage === 'starting' || health.stage === 'polling') && (
+                <p className="text-[11px] text-muted-foreground">
+                  Elapsed: {Math.round(health.elapsedMs / 1000)}s
+                </p>
+              )}
+              {health.error && (
+                <p className="text-[11px] text-red-600 truncate" title={health.error}>
+                  {health.error}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
         <div className="flex-1 overflow-y-auto p-3 space-y-1">
           {workflows.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-8">No workflows found</p>
