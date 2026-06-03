@@ -1,4 +1,4 @@
-import type { Plugin } from "@opencode-ai/plugin"
+import type { Plugin, PluginModule } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin"
 
 import { SdkLikeWorkflowClient } from "./client.js"
@@ -196,4 +196,6 @@ function formatWorkflowResult(state: WorkflowState, dryRun = false): string {
   return lines.join("\n")
 }
 
-export default DynamicWorkflowsPlugin
+export const plugin: PluginModule = { server: DynamicWorkflowsPlugin }
+
+export default plugin
