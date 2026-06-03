@@ -265,6 +265,158 @@ test("Named export DynamicWorkflowsPlugin also works as plugin function", async 
 })
 
 // ---------------------------------------------------------------------------
+// Error boundary tests
+// ---------------------------------------------------------------------------
+
+test("Plugin handles SDK connection failure gracefully", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "oc-dw-plugin-test-"))
+  try {
+    const ctx = createMockCtx(cwd)
+    // Make session.create throw like a real connection failure
+    ctx.client.session.create = async () => { throw new Error("ECONNREFUSED: Connection refused") }
+    const hooks = await plugin.server(ctx as any)
+    const execute = hooks.tool!.dynamic_workflow_run.execute
+
+    // Background mode: should return a string (fire-and-forget), not crash
+    const result = await execute({ objective: "Test connection failure" } as any, {} as any)
+    assert.equal(typeof result, "string", "background mode should return string even on connection failure")
+    assert.ok((result as string).includes("workflow"), "should still reference workflow")
+
+    // Give background promise a moment to settle, then verify error was logged
+    await new Promise((r) => setTimeout(r, 500))
+    assert.ok(
+      ctx.logs.some((l) => l.level === "error" || l.message.includes("error")),
+      "should log connection error",
+    )
+  } finally {
+    await cleanupDir(cwd)
+  }
+})
+
+test("Plugin handles planner failure gracefully in background mode", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "oc-dw-plugin-test-"))
+  try {
+    const ctx = createMockCtx(cwd)
+    // Make session.prompt throw like an invalid session
+    ctx.client.session.prompt = async () => { throw new Error("Session not found: invalid-id") }
+    const hooks = await plugin.server(ctx as any)
+    const execute = hooks.tool!.dynamic_workflow_run.execute
+
+    // Background mode — fires and forgets, should return string immediately
+    const result = await execute({ objective: "Test planner failure" } as any, {} as any)
+    assert.equal(typeof result, "string", "background mode should return string even when planner fails")
+
+    // Give background promise time to settle and log the error
+    await new Promise((r) => setTimeout(r, 1000))
+    assert.ok(
+      ctx.logs.some((l) => l.level === "error"),
+      "should log planner error in background",
+    )
+  } finally {
+    await cleanupDir(cwd)
+  }
+})
+
+test("Plugin handles network timeout gracefully", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "oc-dw-plugin-test-"))
+  try {
+    const ctx = createMockCtx(cwd)
+    // Make session.create hang then timeout
+    ctx.client.session.create = async () => {
+      await new Promise((r) => setTimeout(r, 50))
+      throw new Error("ETIMEDOUT: request timed out")
+    }
+    const hooks = await plugin.server(ctx as any)
+    const execute = hooks.tool!.dynamic_workflow_run.execute
+
+    // Background mode should still return a string
+    const result = await execute({ objective: "Test timeout" } as any, {} as any)
+    assert.equal(typeof result, "string", "background mode should return string on timeout")
+  } finally {
+    await cleanupDir(cwd)
+  }
+})
+
+test("Plugin handles null/undefined args without crashing", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "oc-dw-plugin-test-"))
+  try {
+    const ctx = createMockCtx(cwd)
+    const hooks = await plugin.server(ctx as any)
+    const execute = hooks.tool!.dynamic_workflow_run.execute
+
+    // Null args
+    await assert.rejects(() => execute(null as any, {} as any), /requires an object/, "should reject null")
+    // Undefined args
+    await assert.rejects(() => execute(undefined as any, {} as any), /requires an object/, "should reject undefined")
+    // Non-object args
+    await assert.rejects(() => execute("hello" as any, {} as any), /requires an object/, "should reject string")
+    await assert.rejects(() => execute(42 as any, {} as any), /requires an object/, "should reject number")
+  } finally {
+    await cleanupDir(cwd)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// npm link test — verifies plugin loads correctly via local development flow
+// ---------------------------------------------------------------------------
+
+test("Plugin loads correctly via npm link (local development flow)", async () => {
+  // This test verifies that the package exports resolve correctly when installed
+  // via `npm link`, which is how developers test plugins locally.
+  const { execSync } = await import("node:child_process")
+  const testDir = await mkdtemp(join(tmpdir(), "oc-dw-npm-link-"))
+  try {
+    // Create a minimal package.json in the test dir
+    const { writeFile } = await import("node:fs/promises")
+    await writeFile(join(testDir, "package.json"), JSON.stringify({ name: "test-consumer", type: "module" }), "utf8")
+
+    // Link oc-dw into the test directory
+    execSync(`npm link oc-dw`, { cwd: testDir, stdio: "pipe" })
+
+    // Try to import the plugin via the linked package name
+    const { pathToFileURL } = await import("node:url")
+    const testScript = join(testDir, "test-import.mjs")
+    await writeFile(testScript, `
+      import plugin from "oc-dw";
+      import { DynamicWorkflowsPlugin } from "oc-dw";
+
+      const checks = [];
+      checks.push(typeof plugin === "object");
+      checks.push(typeof plugin.server === "function");
+      checks.push(typeof DynamicWorkflowsPlugin === "function");
+      checks.push(plugin.server === DynamicWorkflowsPlugin);
+
+      // Verify the tool can be instantiated
+      const mockCtx = {
+        directory: "/tmp",
+        worktree: undefined,
+        project: {} ,
+        serverUrl: new URL("http://localhost:3000"),
+        client: {
+          app: { log: async () => {} },
+          session: {},
+        },
+      };
+      const hooks = await plugin.server(mockCtx);
+      checks.push(typeof hooks.tool === "object");
+      checks.push(typeof hooks.tool.dynamic_workflow_run === "object");
+      checks.push(typeof hooks.tool.dynamic_workflow_run.execute === "function");
+
+      const allPassed = checks.every(Boolean);
+      process.stdout.write(allPassed ? "PASS" : "FAIL: " + checks.filter(c => !c).length + " checks failed");
+    `, "utf8")
+
+    // Run the test script
+    const result = execSync(`node test-import.mjs`, { cwd: testDir, encoding: "utf8", timeout: 10000 })
+    assert.equal(result.trim(), "PASS", "npm-linked plugin should load and work correctly")
+  } finally {
+    // Unlink and cleanup
+    try { execSync(`npm unlink oc-dw`, { cwd: testDir, stdio: "pipe" }) } catch { /* ignore */ }
+    await cleanupDir(testDir)
+  }
+})
+
+// ---------------------------------------------------------------------------
 // Zod schema validation tests
 // ---------------------------------------------------------------------------
 

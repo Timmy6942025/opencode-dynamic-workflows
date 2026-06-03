@@ -28,7 +28,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test dist/test/*.test.js",
-    "qa": "npm run build && node --test dist/test/*.test.js",
+    "qa": "npm run build && node --test dist/test/*.test.js && node test/live-opencode-test.mjs",
     "prepack": "npm run build"
   },
   "dependencies": {
