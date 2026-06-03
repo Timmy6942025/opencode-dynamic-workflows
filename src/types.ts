@@ -1,16 +1,29 @@
 export type WorkflowStatus = "planning" | "plan_approval" | "running" | "paused" | "completed" | "failed" | "aborted"
 
-export type PhaseStatus = "pending" | "running" | "completed" | "failed" | "skipped" | "awaiting_approval"
-
-export type TaskStatus = "pending" | "running" | "completed" | "failed" | "skipped" | "awaiting_approval"
-
 export type ModelRole = "planner" | "worker" | "verifier" | "synthesizer" | "critic" | "scout" | "adversary"
 
 export type EffortLevel = "low" | "medium" | "high" | "ultra"
 
-export type PermissionMode = "full" | "plan" | "ask"
+// ---------------------------------------------------------------------------
+// Agent types (used by the runtime)
+// ---------------------------------------------------------------------------
 
-export type OrchestrationMode = "static" | "dynamic"
+export interface AgentResult {
+  text: string
+  error?: string
+  tokensUsed: number
+  model?: string
+}
+
+export interface SpawnedAgent {
+  id: string
+  label: string
+  result: Promise<AgentResult>
+}
+
+// ---------------------------------------------------------------------------
+// Model routing
+// ---------------------------------------------------------------------------
 
 export interface ModelRouterConfig {
   default?: string
@@ -23,85 +36,84 @@ export interface ModelRouterConfig {
   [role: string]: string | string[] | undefined
 }
 
+// ---------------------------------------------------------------------------
+// Options
+// ---------------------------------------------------------------------------
+
 export interface DynamicWorkflowOptions {
   objective: string
   stoppingCondition?: string
   cwd: string
-  baseUrl?: string
   workflowId?: string
-  startServer?: boolean
   maxAgents: number
   concurrency: number
-  verificationRounds: number
-  retryLimit: number
-  qualityGateTimeoutMs: number
   cleanUpSessions: boolean
   dryRun: boolean
-  failFast: boolean
-  maxSummaryInputChars: number
   models: ModelRouterConfig
   metadata?: Record<string, unknown>
-  orchestrationMode: OrchestrationMode
   effortLevel: EffortLevel
-  permissionMode: PermissionMode
   requireApproval: boolean
   adversarialReview: boolean
-  convergenceThreshold: number
-  generateOrchestrationScript: boolean
   saveWorkflow: boolean
   workflowName?: string
   useWorktree: boolean
   worktreeName?: string
-  schedule?: WorkflowSchedule
   skills: string[]
   template?: string
-  scoutFirst?: boolean
   consensusModels?: string[]
   tokenBudget?: number
-  contextOffloadThreshold: number
-  progressReportIntervalMs: number
   signal?: AbortSignal
 }
+
+// ---------------------------------------------------------------------------
+// Plan — now just the script + metadata
+// ---------------------------------------------------------------------------
 
 export interface WorkflowPlan {
   title: string
   summary: string
   maxAgentEstimate: number
-  phases: WorkflowPhase[]
+  /** The dynamically generated JavaScript workflow script. */
+  script: string
   estimatedTokens?: number
   estimatedCost?: number
-  orchestrationScript?: string
   requiresApproval: boolean
 }
 
-export interface WorkflowPhase {
-  id: string
-  title: string
-  description: string
-  strategy: string
-  dependsOn: string[]
-  tasks: AgentTask[]
-  qualityGates: string[]
-  verification: PhaseVerification
+// ---------------------------------------------------------------------------
+// Client interface — aligns with OpenCode SDK's session API
+// ---------------------------------------------------------------------------
+
+export interface WorkflowClient {
+  createSession(title: string, parent?: string): Promise<string>
+  prompt(sessionId: string, text: string, options?: ClientPromptOptions): Promise<PromptResult>
+  /** Fire-and-forget: send a prompt and return immediately. OpenCode handles lifecycle. */
+  promptAsync(sessionId: string, text: string, options?: ClientPromptOptions): Promise<void>
+  /** Poll for messages in a session — used to retrieve async prompt results. */
+  messages(sessionId: string): Promise<unknown>
+  shell(sessionId: string, command: string, timeoutMs?: number): Promise<ShellResult>
+  deleteSession(sessionId: string): Promise<void>
+  abortSession(sessionId: string): Promise<void>
+  log(level: "debug" | "info" | "warn" | "error", message: string, extra?: Record<string, unknown>): Promise<void>
 }
 
-export interface PhaseVerification {
-  strategy: string
-  sampleSize?: number
+export interface ClientPromptOptions {
+  /** Model override using SDK's { providerID, modelID } format. */
+  model?: { providerID: string; modelID: string }
+  agent?: string
+  noReply?: boolean
+  format?: JsonSchemaFormat
 }
 
-export interface AgentTask {
-  id: string
-  title: string
-  prompt: string
-  role: ModelRole
-  model?: string
-  targetFiles: string[]
-  acceptanceCriteria: string[]
-  expectedArtifacts: string[]
-  canEdit: boolean
-  dependsOn: string[]
+export interface JsonSchemaFormat {
+  type: "json_schema"
+  schema: Record<string, unknown>
+  retryCount?: number
 }
+
+// ---------------------------------------------------------------------------
+// Results
+// ---------------------------------------------------------------------------
 
 export interface PromptResult {
   text: string
@@ -123,123 +135,14 @@ export interface VerificationResult {
   confidence: number
   issues: string[]
   evidence: string[]
-  followUpPrompt?: string
   rawText: string
   tokensUsed?: number
   model?: string
-  consensus?: {
-    totalModels: number
-    passVotes: number
-    failVotes: number
-    resolvedByCritic: boolean
-  }
 }
 
-export interface AdversarialReview {
-  reviewerId: string
-  reviewerRole: ModelRole
-  verdict: "refute" | "support" | "neutral"
-  confidence: number
-  issues: string[]
-  evidence: string[]
-  rawText: string
-  tokensUsed?: number
-}
-
-export interface ConvergenceResult {
-  converged: boolean
-  consensusConfidence: number
-  reviews: AdversarialReview[]
-  finalVerdict: "accept" | "reject" | "needs_work"
-  iterations: number
-}
-
-export interface TaskAttempt {
-  attempt: number
-  sessionId?: string
-  model?: string
-  startedAt: string
-  completedAt?: string
-  output?: string
-  error?: string
-  verification?: VerificationResult
-  adversarialReviews?: AdversarialReview[]
-  convergence?: ConvergenceResult
-  tokensUsed?: number
-}
-
-export interface TaskRunState {
-  taskId: string
-  phaseId: string
-  status: TaskStatus
-  attempts: TaskAttempt[]
-  output?: string
-  verified: boolean
-  verification?: VerificationResult
-  adversarialReviews?: AdversarialReview[]
-  convergence?: ConvergenceResult
-  updatedAt: string
-  tokensUsed: number
-}
-
-export interface PhaseRunState {
-  phaseId: string
-  status: PhaseStatus
-  startedAt?: string
-  completedAt?: string
-  gateResults: ShellResult[]
-  error?: string
-  tokensUsed: number
-}
-
-export interface WorkflowEvent {
-  time: string
-  type: string
-  message: string
-  details?: Record<string, unknown>
-}
-
-export interface StoredWorkflowOptions {
-  maxAgents: number
-  concurrency: number
-  verificationRounds: number
-  retryLimit: number
-  qualityGateTimeoutMs: number
-  cleanUpSessions: boolean
-  failFast: boolean
-  maxSummaryInputChars: number
-  models: ModelRouterConfig
-  metadata?: Record<string, unknown>
-  orchestrationMode: OrchestrationMode
-  effortLevel: EffortLevel
-  permissionMode: PermissionMode
-  requireApproval: boolean
-  adversarialReview: boolean
-  convergenceThreshold: number
-  generateOrchestrationScript: boolean
-  saveWorkflow: boolean
-  workflowName?: string
-  useWorktree: boolean
-  worktreeName?: string
-  schedule?: WorkflowSchedule
-  skills: string[]
-  template?: string
-  scoutFirst: boolean
-  consensusModels?: string[]
-  tokenBudget?: number
-  contextOffloadThreshold: number
-  progressReportIntervalMs: number
-}
-
-export interface ScoutFindings {
-  filePaths: string[]
-  dependencyGraph: Record<string, string[]>
-  testLocations: string[]
-  complexityEstimate: EffortLevel
-  summary: string
-  risks: string[]
-  recommendedPhases: string[]
-}
+// ---------------------------------------------------------------------------
+// State — file-backed, resumable
+// ---------------------------------------------------------------------------
 
 export interface WorkflowState {
   id: string
@@ -251,44 +154,57 @@ export interface WorkflowState {
   updatedAt: string
   options: StoredWorkflowOptions
   plan?: WorkflowPlan
-  phases: Record<string, PhaseRunState>
-  tasks: Record<string, TaskRunState>
+  /** The generated workflow script (for resumability). */
+  script?: string
+  /** Output returned by the script. */
+  scriptOutput?: string
+  /** Agent session ids created during execution. */
   sessions: string[]
   summary?: string
   summaryPath?: string
   error?: string
   totalTokensUsed: number
-  totalCostEstimate?: number
-  progressReports: ProgressReport[]
   worktreePath?: string
-  schedule?: WorkflowSchedule
   isTemplate: boolean
   templateName?: string
-  convergenceResults: Record<string, ConvergenceResult>
+  /** Log of all spawned agents and their results. */
+  agentLog: AgentLogEntry[]
 }
 
-export interface ProgressReport {
-  checkpoint: string
-  time: string
-  completedTasks: number
-  totalTasks: number
-  completedPhases: number
-  totalPhases: number
-  currentPhase?: string
-  currentTask?: string
-  verifiedEvidence: string[]
-  remainingWork: string[]
-  blockers: string[]
+export interface AgentLogEntry {
+  id: string
+  label: string
+  model?: string
+  status: "running" | "completed" | "failed"
+  output?: string
+  error?: string
   tokensUsed: number
+  startedAt: string
+  completedAt?: string
 }
 
-export interface WorkflowSchedule {
-  type: "cron" | "interval" | "once"
-  expression: string
-  timezone?: string
-  nextRun?: string
-  lastRun?: string
+export interface StoredWorkflowOptions {
+  maxAgents: number
+  concurrency: number
+  cleanUpSessions: boolean
+  models: ModelRouterConfig
+  metadata?: Record<string, unknown>
+  effortLevel: EffortLevel
+  requireApproval: boolean
+  adversarialReview: boolean
+  saveWorkflow: boolean
+  workflowName?: string
+  useWorktree: boolean
+  worktreeName?: string
+  skills: string[]
+  template?: string
+  consensusModels?: string[]
+  tokenBudget?: number
 }
+
+// ---------------------------------------------------------------------------
+// Templates
+// ---------------------------------------------------------------------------
 
 export interface WorkflowTemplate {
   id: string
@@ -297,40 +213,28 @@ export interface WorkflowTemplate {
   category: string
   objectivePattern: string
   defaultOptions: Partial<DynamicWorkflowOptions>
-  planTemplate?: WorkflowPlan
+  /** A function that returns a JavaScript workflow script tailored to the objective. */
+  scriptTemplate: (objective: string, options: DynamicWorkflowOptions) => string
   skills: string[]
 }
 
-export interface WorkflowClient {
-  health(): Promise<unknown>
-  providers(): Promise<unknown>
-  createSession(title: string, parent?: string): Promise<string>
-  initSession(sessionId: string): Promise<void>
-  prompt(sessionId: string, text: string, options?: ClientPromptOptions): Promise<PromptResult>
-  shell(sessionId: string, command: string, timeoutMs?: number): Promise<ShellResult>
-  deleteSession(sessionId: string): Promise<void>
-  abortSession(sessionId: string): Promise<void>
-  log(level: "debug" | "info" | "warn" | "error", message: string, extra?: Record<string, unknown>): Promise<void>
-  close?(): Promise<void>
-  getSessionMessages?(sessionId: string): Promise<unknown>
+// ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+
+export interface WorkflowEvent {
+  time: string
+  type: string
+  message: string
+  details?: Record<string, unknown>
 }
 
-export interface ClientPromptOptions {
-  model?: string
-  agent?: string
-  noReply?: boolean
-  format?: JsonSchemaFormat
-}
-
-export interface JsonSchemaFormat {
-  type: "json_schema"
-  schema: Record<string, unknown>
-  retryCount?: number
-}
+// ---------------------------------------------------------------------------
+// Reporting
+// ---------------------------------------------------------------------------
 
 export interface Reporter {
   info(message: string, details?: Record<string, unknown>): void
   warn(message: string, details?: Record<string, unknown>): void
   error(message: string, details?: Record<string, unknown>): void
-  progress?(report: ProgressReport): void
 }

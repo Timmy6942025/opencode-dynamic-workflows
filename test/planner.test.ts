@@ -2,41 +2,29 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { defaultWorkflowOptions } from "../src/options.js"
-import { normalizePlan } from "../src/planner.js"
+import { MockWorkflowClient } from "./mock-client.js"
+import { createDynamicPlan } from "../src/planner.js"
 
-test("normalizePlan caps planner output to maxAgents and normalizes task ids", () => {
+test("createDynamicPlan returns a plan with a script", async () => {
+  const client = new MockWorkflowClient()
   const options = defaultWorkflowOptions("test objective", "/tmp")
-  options.maxAgents = 2
-  const plan = normalizePlan(
-    {
-      title: "Big plan",
-      summary: "summary",
-      maxAgentEstimate: 10,
-      phases: [
-        {
-          id: "Phase One",
-          title: "Phase One",
-          description: "desc",
-          strategy: "fan out",
-          dependsOn: [],
-          qualityGates: ["npm test"],
-          verification: { strategy: "verify" },
-          tasks: [
-            { id: "Task A", title: "A", prompt: "Do A", role: "worker", acceptanceCriteria: ["A"], canEdit: true },
-            { id: "Task B", title: "B", prompt: "Do B", role: "critic", acceptanceCriteria: ["B"], canEdit: false },
-            { id: "Task C", title: "C", prompt: "Do C", role: "worker", acceptanceCriteria: ["C"], canEdit: false },
-          ],
-        },
-      ],
-    },
-    options,
-  )
 
-  assert.equal(plan.phases.length, 1)
-  assert.equal(plan.phases[0].id, "phase-one")
-  assert.deepEqual(
-    plan.phases[0].tasks.map((task) => task.id),
-    ["task-a", "task-b"],
-  )
-  assert.equal(plan.phases[0].tasks[1].role, "critic")
+  const plan = await createDynamicPlan(client, options)
+
+  assert.ok(plan.title, "plan should have a title")
+  assert.ok(plan.summary, "plan should have a summary")
+  assert.ok(plan.script, "plan should have a script")
+  assert.ok(plan.script.includes("spawn") || plan.script.includes("wait"), "script should use workflow API")
+  assert.ok(plan.maxAgentEstimate > 0, "maxAgentEstimate should be positive")
+})
+
+test("createDynamicPlan falls back to a default script if planner returns empty", async () => {
+  const client = new MockWorkflowClient()
+  client.scriptToReturn = "" // Force fallback
+  const options = defaultWorkflowOptions("test objective", "/tmp")
+
+  const plan = await createDynamicPlan(client, options)
+
+  assert.ok(plan.script, "plan should have a fallback script")
+  assert.ok(plan.script.includes("Fallback") || plan.script.includes("Survey"), "should use fallback plan")
 })

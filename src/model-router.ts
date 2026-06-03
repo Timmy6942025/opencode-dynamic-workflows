@@ -1,26 +1,10 @@
-import type { AgentTask, ModelRole, ModelRouterConfig } from "./types.js"
-import { isModelRole } from "./util.js"
+import type { ModelRole, ModelRouterConfig } from "./types.js"
 
-export function resolveModel(role: ModelRole, task: Pick<AgentTask, "model" | "role"> | undefined, models: ModelRouterConfig): string | undefined {
+export function resolveModel(role: ModelRole, task: Pick<{ model?: string; role: ModelRole }, "model" | "role"> | undefined, models: ModelRouterConfig): string | undefined {
   const taskModel = task?.model
   if (taskModel) return taskModel
   const roleModel = models[task?.role ?? role] ?? models[role] ?? models.default
   return typeof roleModel === "string" ? roleModel : undefined
 }
 
-export function parseModelFlag(value: string): { role: string; model: string } {
-  const idx = value.indexOf("=")
-  if (idx <= 0 || idx === value.length - 1) {
-    throw new Error(`Invalid --model value "${value}". Expected role=provider/model.`)
-  }
-  const role = value.slice(0, idx)
-  if (!isModelRole(role) && role !== "default") {
-    throw new Error(`Invalid model role "${role}". Use default, planner, worker, verifier, synthesizer, critic, or scout.`)
-  }
-  return { role, model: value.slice(idx + 1) }
-}
 
-export function withModelOverride(models: ModelRouterConfig, role: string, model: string | undefined): ModelRouterConfig {
-  if (!model) return models
-  return { ...models, [role]: model }
-}

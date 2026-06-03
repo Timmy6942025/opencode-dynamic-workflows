@@ -70,25 +70,17 @@ export function formatPlanPreview(plan: WorkflowPlan, options: DynamicWorkflowOp
     `Estimated tokens: ${plan.estimatedTokens ?? "unknown"}`,
     `Estimated cost: ${plan.estimatedCost ?? "unknown"}`,
     `Concurrency: ${options.concurrency}`,
-    `Verification rounds: ${options.verificationRounds}`,
     `Adversarial review: ${options.adversarialReview ? "enabled" : "disabled"}`,
-    `Orchestration mode: ${options.orchestrationMode}`,
-    `Permission mode: ${options.permissionMode}`,
     "",
-    "### Phases",
+    "### Generated Workflow Script",
+    "```javascript",
+    plan.script.slice(0, 2000),
+    plan.script.length > 2000 ? "// ... (truncated)" : "",
+    "```",
+    "",
+    "---",
+    "Approve to proceed, or reject to cancel.",
   ]
-
-  for (const phase of plan.phases) {
-    lines.push(`#### ${phase.title} (${phase.id})`)
-    lines.push(`Strategy: ${phase.strategy}`)
-    lines.push(`Tasks: ${phase.tasks.length}`)
-    if (phase.dependsOn.length) lines.push(`Depends on: ${phase.dependsOn.join(", ")}`)
-    if (phase.qualityGates.length) lines.push(`Quality gates: ${phase.qualityGates.join("; ")}`)
-    lines.push("")
-  }
-
-  lines.push("---")
-  lines.push("Approve to proceed, or reject to cancel.")
   return lines.join("\n")
 }
 

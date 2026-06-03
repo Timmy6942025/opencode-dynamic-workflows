@@ -1,4 +1,4 @@
-import type { ClientPromptOptions, PromptResult, ShellResult, WorkflowClient, WorkflowPlan } from "../src/types.js"
+import type { ClientPromptOptions, PromptResult, ShellResult, WorkflowClient } from "../src/types.js"
 
 export class MockWorkflowClient implements WorkflowClient {
   sessions: string[] = []
@@ -7,15 +7,12 @@ export class MockWorkflowClient implements WorkflowClient {
   deleted: string[] = []
   aborted: string[] = []
 
-  constructor(private readonly plan: WorkflowPlan) {}
-
-  async health(): Promise<unknown> {
-    return { healthy: true }
-  }
-
-  async providers(): Promise<unknown> {
-    return {}
-  }
+  /** The script the mock planner will return. */
+  scriptToReturn = `
+log("info", "Starting mock workflow")
+const [result] = await wait(spawn("Mock Worker", "Do the work", { role: "worker" }))
+return result.text
+`
 
   async createSession(title: string): Promise<string> {
     const id = `session-${this.sessions.length + 1}-${title.replace(/[^a-z0-9]+/gi, "-").slice(0, 24)}`
@@ -23,15 +20,30 @@ export class MockWorkflowClient implements WorkflowClient {
     return id
   }
 
-  async initSession(): Promise<void> {}
-
   async prompt(sessionId: string, text: string, options?: ClientPromptOptions): Promise<PromptResult> {
     this.prompts.push({ sessionId, text, options })
     if (options?.noReply) return { text: "" }
-    if (text.includes("You are planning an OpenCode dynamic workflow")) {
-      return { text: "planned", structured: this.plan }
+
+    // Planner prompt — return a workflow script
+    if (text.includes("workflow script generator") || text.includes("You are a workflow script generator")) {
+      return {
+        text: "planned",
+        structured: {
+          title: "Mock Workflow",
+          summary: "A mock workflow for testing",
+          maxAgentEstimate: 2,
+          script: this.scriptToReturn,
+        },
+      }
     }
-    if (text.includes("independent verifier")) {
+
+    // Synthesizer
+    if (text.includes("Synthesize") || text.includes("synthesiz")) {
+      return { text: "# Final Report\n\nAll mocked tasks completed and verified." }
+    }
+
+    // Verifier
+    if (text.includes("independent verifier") || text.includes("judge the worker")) {
       return {
         text: "pass",
         structured: {
@@ -42,13 +54,24 @@ export class MockWorkflowClient implements WorkflowClient {
         },
       }
     }
-    if (text.includes("final dynamic workflow report")) {
-      return { text: "# Final Report\n\nAll mocked tasks completed and verified." }
-    }
-    if (text.includes("summarizing a chunk")) {
-      return { text: "chunk summary" }
-    }
+
+    // Default worker response
     return { text: `worker output for ${sessionId}` }
+  }
+
+  async promptAsync(sessionId: string, text: string, options?: ClientPromptOptions): Promise<void> {
+    // Fire-and-forget: record the prompt but resolve immediately.
+    this.prompts.push({ sessionId, text, options })
+  }
+
+  async messages(_sessionId: string): Promise<unknown> {
+    // Return the last worker prompt response so pollForCompletion finds it.
+    return [
+      {
+        role: "assistant",
+        parts: [{ type: "text", text: `worker output for ${_sessionId}` }],
+      },
+    ]
   }
 
   async shell(_sessionId: string, command: string): Promise<ShellResult> {

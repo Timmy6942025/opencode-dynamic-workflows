@@ -3,10 +3,7 @@ import { dirname, join, resolve } from "node:path"
 
 import type {
   DynamicWorkflowOptions,
-  PhaseRunState,
-  TaskRunState,
   WorkflowEvent,
-  WorkflowPlan,
   WorkflowState,
 } from "./types.js"
 import { createWorkflowId, nowIso, slugify } from "./util.js"
@@ -48,22 +45,6 @@ export class FileWorkflowStore {
     return join(this.root, "workflows")
   }
 
-  templatesDir(): string {
-    return join(this.root, "templates")
-  }
-
-  skillsDir(): string {
-    return join(this.root, "skills")
-  }
-
-  cacheDir(workflowId: string): string {
-    return join(this.runDir(workflowId), "cache")
-  }
-
-  progressPath(workflowId: string): string {
-    return join(this.runDir(workflowId), "progress.jsonl")
-  }
-
   runDir(workflowId: string): string {
     return join(this.root, "runs", workflowId)
   }
@@ -94,38 +75,24 @@ export class FileWorkflowStore {
       options: {
         maxAgents: options.maxAgents,
         concurrency: options.concurrency,
-        verificationRounds: options.verificationRounds,
-        retryLimit: options.retryLimit,
-        qualityGateTimeoutMs: options.qualityGateTimeoutMs,
         cleanUpSessions: options.cleanUpSessions,
-        failFast: options.failFast,
-        maxSummaryInputChars: options.maxSummaryInputChars,
         models: options.models,
         metadata: options.metadata,
-        orchestrationMode: options.orchestrationMode,
         effortLevel: options.effortLevel,
-        permissionMode: options.permissionMode,
         requireApproval: options.requireApproval,
         adversarialReview: options.adversarialReview,
-        convergenceThreshold: options.convergenceThreshold,
-        generateOrchestrationScript: options.generateOrchestrationScript,
         saveWorkflow: options.saveWorkflow,
         workflowName: options.workflowName,
         useWorktree: options.useWorktree,
         skills: options.skills,
         template: options.template,
-        scoutFirst: options.scoutFirst ?? false,
+        consensusModels: options.consensusModels,
         tokenBudget: options.tokenBudget,
-        contextOffloadThreshold: options.contextOffloadThreshold,
-        progressReportIntervalMs: options.progressReportIntervalMs,
       },
-      phases: {},
-      tasks: {},
       sessions: [],
       totalTokensUsed: 0,
-      progressReports: [],
       isTemplate: false,
-      convergenceResults: {},
+      agentLog: [],
     }
     await this.save(state)
     await this.setLatest(id)
@@ -133,7 +100,7 @@ export class FileWorkflowStore {
       time: now,
       type: "workflow.created",
       message: "Workflow created",
-      details: { objective: options.objective, effortLevel: options.effortLevel, orchestrationMode: options.orchestrationMode },
+      details: { objective: options.objective, effortLevel: options.effortLevel },
     })
     return state
   }
@@ -199,27 +166,6 @@ export class FileWorkflowStore {
     return path
   }
 
-  async saveProgressReport(workflowId: string, report: import("./types.js").ProgressReport): Promise<void> {
-    const path = this.progressPath(workflowId)
-    await mkdir(dirname(path), { recursive: true })
-    await writeFile(path, `${JSON.stringify(report)}\n`, { encoding: "utf8", flag: "a" })
-  }
-
-  async readCachedResult(workflowId: string, cacheKey: string): Promise<string | undefined> {
-    const path = join(this.cacheDir(workflowId), `${cacheKey}.json`)
-    try {
-      return await readFile(path, "utf8")
-    } catch {
-      return undefined
-    }
-  }
-
-  async writeCachedResult(workflowId: string, cacheKey: string, content: string): Promise<void> {
-    const dir = this.cacheDir(workflowId)
-    await mkdir(dir, { recursive: true })
-    await writeFile(join(dir, `${cacheKey}.json`), content, "utf8")
-  }
-
   async saveWorkflowTemplate(workflowId: string, name: string, state: WorkflowState): Promise<string> {
     const dir = this.workflowsDir()
     await mkdir(dir, { recursive: true })
@@ -252,30 +198,3 @@ export class FileWorkflowStore {
   }
 }
 
-export function initializePlanState(state: WorkflowState, plan: WorkflowPlan): WorkflowState {
-  state.plan = plan
-  state.phases = {}
-  state.tasks = {}
-  for (const phase of plan.phases) {
-    const phaseState: PhaseRunState = {
-      phaseId: phase.id,
-      status: "pending",
-      gateResults: [],
-      tokensUsed: 0,
-    }
-    state.phases[phase.id] = phaseState
-    for (const task of phase.tasks) {
-      const taskState: TaskRunState = {
-        taskId: task.id,
-        phaseId: phase.id,
-        status: "pending",
-        attempts: [],
-        verified: false,
-        updatedAt: nowIso(),
-        tokensUsed: 0,
-      }
-      state.tasks[task.id] = taskState
-    }
-  }
-  return state
-}

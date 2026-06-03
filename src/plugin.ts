@@ -26,7 +26,10 @@ function containsDryRunHint(objective: string): boolean {
 }
 
 const WORKFLOW_DESCRIPTION = [
-  "Launch a model-agnostic dynamic workflow that plans, fans out OpenCode subagents, verifies results, checkpoints state, and synthesizes a final report.",
+  "Launch a dynamic workflow that generates a custom JavaScript harness script for the task, then executes it with multi-agent orchestration.",
+  "",
+  "The planner writes a tailor-made workflow script using spawn/wait/parallel/forEach/synthesize/adversarial primitives.",
+  "Each spawned agent runs in its own isolated OpenCode session with its own context window.",
   "",
   "Use dynamic_workflow_run only when the user explicitly asks for a workflow, multi-agent orchestration, fan-out, or coordinated task execution.",
   "For simple single-file edits or quick questions, use ordinary OpenCode tools instead.",
@@ -34,16 +37,15 @@ const WORKFLOW_DESCRIPTION = [
   "Guidelines:",
   "- objective is required and should be a clear, actionable goal.",
   "- stopping_condition is optional but strongly recommended for verifiable end states.",
-  "- Use template to select a built-in workflow (e.g., 'deep-research', 'audit', 'migration').",
+  "- Use template to select a built-in workflow (e.g., 'deep-research', 'codebase-audit', 'large-migration', 'test-generation', 'refactor', 'feature').",
   "- Use skill to apply constraints like 'no-casts', 'test-driven', 'strict-types'.",
   "- Set require_approval=true when the plan should be reviewed before execution.",
-  "- Set adversarial_review=true for independent verification and convergence detection.",
+  "- Set adversarial_review=true for independent verification of agent outputs.",
   "- background defaults to true; set false only when you need synchronous completion.",
-  "- effort controls plan granularity: low (1-2 phases), medium (3-4), high (5-8), ultra (9+).",
+  "- effort controls script complexity: low (simple sequential), medium (fan-out), high (multi-pattern), ultra (tournament + adversarial).",
   "- Models are specified as OpenCode provider/model ids (e.g., 'anthropic/claude-sonnet-4-5').",
-  "- Every workflow spawns isolated worker sessions with scoped prompts and acceptance criteria.",
-  "- Workers may read, edit, and run commands through OpenCode according to canEdit.",
-  "- Failed workers return null and log the failure unless the workflow is aborted.",
+  "- Each spawn() creates an isolated OpenCode session with its own context window.",
+  "- The generated script uses standard JavaScript (loops, conditionals, Math, Array) plus the workflow API.",
 ].join("\n")
 
 export const DynamicWorkflowsPlugin: Plugin = async (ctx) => {
@@ -70,7 +72,7 @@ export const DynamicWorkflowsPlugin: Plugin = async (ctx) => {
           verifier_model: tool.schema.string().optional().describe("OpenCode provider/model id for verification agents. When not set, uses the default model."),
           synthesizer_model: tool.schema.string().optional().describe("OpenCode provider/model id for the synthesis agent. When not set, uses the default model."),
           background: tool.schema.boolean().optional().describe("Run the workflow in the background and return immediately. Defaults to true. Set to false for synchronous completion in the tool call."),
-          effort: tool.schema.enum(["low", "medium", "high", "ultra"]).optional().describe("Planning effort level. low=1-2 phases, medium=3-4, high=5-8, ultra=9+. Defaults to high."),
+          effort: tool.schema.enum(["low", "medium", "high", "ultra"]).optional().describe("Planning effort level. Controls script complexity: low (simple sequential), medium (fan-out), high (multi-pattern), ultra (tournament + adversarial). Defaults to high."),
           require_approval: tool.schema.boolean().optional().describe("When true, the workflow pauses after planning and requests human approval before executing any tasks."),
           adversarial_review: tool.schema.boolean().optional().describe("Enable adversarial review: spawn independent reviewer agents to verify convergence before marking tasks complete."),
           template: tool.schema.string().optional().describe("Built-in workflow template id to use (e.g., 'deep-research', 'codebase-audit', 'large-migration', 'test-generation'). Template is applied before planning."),
@@ -176,17 +178,18 @@ function formatWorkflowResult(state: WorkflowState, dryRun = false): string {
   if (dryRun || state.status === "paused") {
     const lines = [
       `(dry run) Workflow ${state.id} planned — not executed.`,
+      `Script: .opencode/dynamic-workflows/runs/${state.id}/workflow-script.js`,
       `Plan: .opencode/dynamic-workflows/runs/${state.id}/plan.json`,
-      `Phases: ${Object.keys(state.phases).length} planned`,
-      `Tasks: ${Object.keys(state.tasks).length} planned`,
     ]
     return lines.join("\n")
   }
+  const agents = state.agentLog
+  const completed = agents.filter((a) => a.status === "completed").length
+  const failed = agents.filter((a) => a.status === "failed").length
   const lines = [
     `Workflow ${state.id} finished with status ${state.status}.`,
     `Summary: ${state.summaryPath ?? "not written"}`,
-    `Phases: ${Object.values(state.phases).filter((p) => p.status === "completed").length}/${Object.keys(state.phases).length} completed`,
-    `Tasks: ${Object.values(state.tasks).filter((t) => t.status === "completed").length}/${Object.keys(state.tasks).length} completed`,
+    `Agents: ${completed}/${agents.length} completed${failed > 0 ? `, ${failed} failed` : ""}`,
     `Tokens used: ${state.totalTokensUsed}`,
   ]
   if (state.error) lines.push(`Error: ${state.error}`)
