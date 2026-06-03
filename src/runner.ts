@@ -37,6 +37,7 @@ export class DynamicWorkflowRunner {
     // ---- Planning step (generate the workflow script) ----
     if (!state.script) {
       this.reporter.info("Planning workflow", { workflowId: state.id })
+      options.onProgress?.({ title: "Planning workflow...", metadata: { workflowId: state.id, phase: "planning" } })
       state.status = "planning"
       await this.store.save(state)
 
@@ -101,6 +102,7 @@ export class DynamicWorkflowRunner {
     await this.store.mutateState(state.id, (s) => { s.status = "running" })
     state = await this.store.load(state.id)
     this.reporter.info("Executing workflow script", { workflowId: state.id })
+    options.onProgress?.({ title: "Executing workflow script...", metadata: { workflowId: state.id, phase: "executing" } })
 
     try {
       const executor = new ScriptExecutor(this.client, options, this.reporter)
@@ -163,12 +165,15 @@ export class DynamicWorkflowRunner {
         message: "Workflow completed",
         details: { summaryPath, durationMs: result.durationMs, tokensUsed: result.tokensUsed, agentsSpawned: result.runtime.agents.length },
       })
-
       this.reporter.info("Workflow completed", {
         workflowId: state.id,
         durationMs: result.durationMs,
         tokensUsed: result.tokensUsed,
         agentsSpawned: result.runtime.agents.length,
+      })
+      options.onProgress?.({
+        title: `Workflow completed (${result.runtime.agents.length} agents)`,
+        metadata: { workflowId: state.id, phase: "completed", tokensUsed: result.tokensUsed, agentsSpawned: result.runtime.agents.length },
       })
 
       // Save workflow as template if requested

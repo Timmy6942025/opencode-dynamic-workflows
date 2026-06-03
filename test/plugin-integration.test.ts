@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import test from "node:test"
 
 import pluginModule from "../src/plugin.js"
-import { plugin, DynamicWorkflowsPlugin } from "../src/plugin.js"
+import { DynamicWorkflowsPlugin } from "../src/plugin.js"
 
 /** Robust cleanup that retries on ENOTEMPTY (background workflows may still be writing). */
 async function cleanupDir(dir: string, retries = 3): Promise<void> {
@@ -73,15 +73,10 @@ test("PluginModule export shape matches OpenCode V1 plugin format", () => {
   assert.equal(typeof pluginModule, "object", "default export should be an object (PluginModule)")
   assert.equal(typeof pluginModule.server, "function", "default.server should be a function")
 
-  // Named 'plugin' export is the same PluginModule object
-  assert.ok(plugin, "named plugin export should exist")
-  assert.equal(plugin, pluginModule, "named plugin should equal default export")
-  assert.equal(typeof plugin.server, "function", "plugin.server should be a function")
-
   // DynamicWorkflowsPlugin is the raw function
   assert.ok(DynamicWorkflowsPlugin, "DynamicWorkflowsPlugin named export should exist")
   assert.equal(typeof DynamicWorkflowsPlugin, "function", "DynamicWorkflowsPlugin should be a function")
-  assert.equal(plugin.server, DynamicWorkflowsPlugin, "plugin.server should equal DynamicWorkflowsPlugin")
+  assert.equal(pluginModule.server, DynamicWorkflowsPlugin, "pluginModule.server should equal DynamicWorkflowsPlugin")
 })
 
 test("Plugin initializes and returns Hooks with tool definition", async () => {
@@ -99,6 +94,10 @@ test("Plugin initializes and returns Hooks with tool definition", async () => {
     assert.ok(toolDef.description.includes("dynamic workflow"), "description should mention workflow")
     assert.equal(typeof toolDef.execute, "function", "tool should have an execute function")
     assert.ok(toolDef.args, "tool should have args schema")
+
+    // Verify new hooks from docs compliance
+    assert.equal(typeof hooks.dispose, "function", "should have dispose hook")
+    assert.equal(typeof hooks["shell.env"], "function", "should have shell.env hook")
   } finally {
     await cleanupDir(cwd)
   }
@@ -170,10 +169,12 @@ test("Plugin tool.execute starts a workflow with valid objective (background mod
     const hooks = await pluginModule.server(ctx as any)
     const execute = hooks.tool!.dynamic_workflow_run.execute
 
-    const result = await execute({ objective: "Create a hello world app" } as any, {} as any)
-    assert.equal(typeof result, "string", "should return a string result")
-    assert.ok((result as string).includes("workflow"), "result should mention workflow")
-    assert.ok((result as string).includes(".opencode/dynamic-workflows/runs/"), "result should reference the run directory")
+    const result = await execute({ objective: "Create a hello world app" } as any, { directory: cwd, worktree: undefined, metadata: () => {}, abort: new AbortController().signal } as any)
+    assert.ok(typeof result === "object", "should return a structured ToolResult")
+    assert.ok((result as any).output.includes("workflow"), "result should mention workflow")
+    assert.ok((result as any).output.includes(".opencode/dynamic-workflows/runs/"), "result should reference the run directory")
+    assert.ok((result as any).title, "result should have a title")
+    assert.ok((result as any).metadata, "result should have metadata")
   } finally {
     await cleanupDir(cwd)
   }
@@ -186,10 +187,10 @@ test("Plugin tool.execute handles dry_run option", async () => {
     const hooks = await pluginModule.server(ctx as any)
     const execute = hooks.tool!.dynamic_workflow_run.execute
 
-    const result = await execute({ objective: "Test dry run", dry_run: true } as any, {} as any)
-    assert.equal(typeof result, "string")
+    const result = await execute({ objective: "Test dry run", dry_run: true } as any, { directory: cwd, worktree: undefined, metadata: () => {}, abort: new AbortController().signal } as any)
+    assert.ok(typeof result === "object", "should return structured ToolResult")
     assert.ok(
-      (result as string).toLowerCase().includes("dry run"),
+      (result as any).output.toLowerCase().includes("dry run") || (result as any).title.toLowerCase().includes("dry run"),
       "should indicate dry run",
     )
   } finally {
@@ -204,10 +205,10 @@ test("Plugin tool.execute auto-detects dry run from objective hints", async () =
     const hooks = await pluginModule.server(ctx as any)
     const execute = hooks.tool!.dynamic_workflow_run.execute
 
-    const result = await execute({ objective: "What will happen if I refactor this?" } as any, {} as any)
-    assert.equal(typeof result, "string")
+    const result = await execute({ objective: "What will happen if I refactor this?" } as any, { directory: cwd, worktree: undefined, metadata: () => {}, abort: new AbortController().signal } as any)
+    assert.ok(typeof result === "object", "should return structured ToolResult")
     assert.ok(
-      (result as string).toLowerCase().includes("dry run"),
+      (result as any).output.toLowerCase().includes("dry run") || (result as any).title.toLowerCase().includes("dry run"),
       "should auto-detect dry run from 'what will happen' hint",
     )
   } finally {
@@ -233,9 +234,9 @@ test("Plugin tool.execute handles all optional arguments", async () => {
       adversarial_review: true,
       skill: ["test-driven", "strict-types"],
       token_budget: 50000,
-    } as any, {} as any)
+    } as any, { directory: cwd, worktree: undefined, metadata: () => {}, abort: new AbortController().signal } as any)
 
-    assert.equal(typeof result, "string", "should handle all options without error")
+    assert.ok(typeof result === "object", "should handle all options without error")
   } finally {
     await cleanupDir(cwd)
   }
@@ -251,9 +252,9 @@ test("Plugin tool.execute rejects invalid effort level gracefully", async () => 
     const result = await execute({
       objective: "Test invalid effort",
       effort: "invalid-effort",
-    } as any, {} as any)
+    } as any, { directory: cwd, worktree: undefined, metadata: () => {}, abort: new AbortController().signal } as any)
 
-    assert.equal(typeof result, "string", "should not crash on invalid effort")
+    assert.ok(typeof result === "object", "should not crash on invalid effort")
   } finally {
     await cleanupDir(cwd)
   }
@@ -290,10 +291,10 @@ test("Plugin handles SDK connection failure gracefully", async () => {
     const hooks = await pluginModule.server(ctx as any)
     const execute = hooks.tool!.dynamic_workflow_run.execute
 
-    // Background mode: should return a string (fire-and-forget), not crash
-    const result = await execute({ objective: "Test connection failure" } as any, {} as any)
-    assert.equal(typeof result, "string", "background mode should return string even on connection failure")
-    assert.ok((result as string).includes("workflow"), "should still reference workflow")
+    // Background mode: should return structured result (fire-and-forget), not crash
+    const result = await execute({ objective: "Test connection failure" } as any, { directory: cwd, worktree: undefined, metadata: () => {}, abort: new AbortController().signal } as any)
+    assert.ok(typeof result === "object", "background mode should return structured result even on connection failure")
+    assert.ok((result as any).output.includes("workflow"), "should still reference workflow")
 
     // Give background promise a moment to settle, then verify error was logged
     await new Promise((r) => setTimeout(r, 500))
@@ -315,9 +316,9 @@ test("Plugin handles planner failure gracefully in background mode", async () =>
     const hooks = await pluginModule.server(ctx as any)
     const execute = hooks.tool!.dynamic_workflow_run.execute
 
-    // Background mode — fires and forgets, should return string immediately
-    const result = await execute({ objective: "Test planner failure" } as any, {} as any)
-    assert.equal(typeof result, "string", "background mode should return string even when planner fails")
+    // Background mode — fires and forgets, should return structured result immediately
+    const result = await execute({ objective: "Test planner failure" } as any, { directory: cwd, worktree: undefined, metadata: () => {}, abort: new AbortController().signal } as any)
+    assert.ok(typeof result === "object", "background mode should return structured result even when planner fails")
 
     // Give background promise time to settle and log the error
     await new Promise((r) => setTimeout(r, 1000))
@@ -342,9 +343,9 @@ test("Plugin handles network timeout gracefully", async () => {
     const hooks = await pluginModule.server(ctx as any)
     const execute = hooks.tool!.dynamic_workflow_run.execute
 
-    // Background mode should still return a string
-    const result = await execute({ objective: "Test timeout" } as any, {} as any)
-    assert.equal(typeof result, "string", "background mode should return string on timeout")
+    // Background mode should still return a structured result
+    const result = await execute({ objective: "Test timeout" } as any, { directory: cwd, worktree: undefined, metadata: () => {}, abort: new AbortController().signal } as any)
+    assert.ok(typeof result === "object", "background mode should return structured result on timeout")
   } finally {
     await cleanupDir(cwd)
   }
@@ -391,17 +392,14 @@ test("Plugin loads correctly via npm link (local development flow)", async () =>
     const testScript = join(testDir, "test-import.mjs")
     await writeFile(testScript, `
       import pluginModule from "oc-dw";
-      import { plugin, DynamicWorkflowsPlugin } from "oc-dw";
+      import { DynamicWorkflowsPlugin } from "oc-dw";
 
       const checks = [];
       // V1 PluginModule format: default export is an object with .server
       checks.push(typeof pluginModule === "object");
       checks.push(typeof pluginModule.server === "function");
-      checks.push(typeof plugin === "object");
-      checks.push(typeof plugin.server === "function");
-      checks.push(pluginModule === plugin);
       checks.push(typeof DynamicWorkflowsPlugin === "function");
-      checks.push(plugin.server === DynamicWorkflowsPlugin);
+      checks.push(pluginModule.server === DynamicWorkflowsPlugin);
 
       // Verify the tool can be instantiated via server()
       const mockCtx = {
@@ -418,6 +416,7 @@ test("Plugin loads correctly via npm link (local development flow)", async () =>
       checks.push(typeof hooks.tool === "object");
       checks.push(typeof hooks.tool.dynamic_workflow_run === "object");
       checks.push(typeof hooks.tool.dynamic_workflow_run.execute === "function");
+      checks.push(typeof hooks.dispose === "function");
 
       const allPassed = checks.every(Boolean);
       process.stdout.write(allPassed ? "PASS" : "FAIL: " + checks.filter(c => !c).length + " checks failed");
@@ -612,9 +611,6 @@ test("Plugin can be imported via dist path (simulating package resolution)", asy
     assert.equal(typeof mod.default, "object", "default export should be an object")
     assert.equal(typeof mod.default.server, "function", "default.server should be a function")
     // Named exports
-    assert.ok(mod.plugin, "should have named 'plugin' export")
-    assert.equal(typeof mod.plugin.server, "function", "plugin.server should be a function")
-    assert.equal(mod.default, mod.plugin, "default should equal named plugin")
     assert.ok(mod.DynamicWorkflowsPlugin, "should have DynamicWorkflowsPlugin named export")
     assert.equal(typeof mod.DynamicWorkflowsPlugin, "function", "DynamicWorkflowsPlugin should be a function")
     assert.equal(mod.default.server, mod.DynamicWorkflowsPlugin, "default.server should equal DynamicWorkflowsPlugin")
@@ -644,11 +640,16 @@ test("Plugin lifecycle smoke test — init, dry-run execute, verify artifacts", 
       objective: "Create a README file",
       dry_run: true,
       background: false,
-    } as any, {} as any)
+    } as any, { directory: cwd, worktree: undefined, metadata: () => {}, abort: new AbortController().signal } as any)
 
-    // 3. Verify the result
-    assert.equal(typeof result, "string", "should return a string result")
-    assert.ok((result as string).includes(".opencode/dynamic-workflows/runs/") || (result as string).includes("planned"), "should reference run directory or indicate dry run")
+    // 3. Verify the structured ToolResult
+    assert.ok(typeof result === "object", "should return a structured ToolResult")
+    assert.ok(typeof (result as any).output === "string", "result should have output string")
+    assert.ok(
+      (result as any).output.includes(".opencode/dynamic-workflows/runs/") || (result as any).output.includes("planned") || (result as any).title.includes("Dry run"),
+      "should reference run directory or indicate dry run"
+    )
+    assert.ok((result as any).metadata, "result should have metadata")
 
     // 4. Verify state files were written
     const { readFile, readdir } = await import("node:fs/promises")

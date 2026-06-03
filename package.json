@@ -43,7 +43,8 @@
     "typescript": "^5.7.0"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20",
+    "opencode": ">=1.15.0"
   },
   "keywords": [
     "opencode",

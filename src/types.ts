@@ -63,6 +63,8 @@ export interface DynamicWorkflowOptions {
   consensusModels?: string[]
   tokenBudget?: number
   signal?: AbortSignal
+  /** Progress callback from ToolContext.metadata() for live UI updates. */
+  onProgress?: (input: { title?: string; metadata?: Record<string, unknown> }) => void
 }
 
 // ---------------------------------------------------------------------------

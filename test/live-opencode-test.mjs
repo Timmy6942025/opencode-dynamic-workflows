@@ -53,9 +53,8 @@ const mod = await import(pathToFileURL(distPath).href)
 check(mod.default, "default export exists")
 check(typeof mod.default === "object", "default export is an object (V1 PluginModule format)")
 check(typeof mod.default.server === "function", "default.server is a function")
-check(typeof mod.plugin === "object", "named 'plugin' export exists (PluginModule)")
-check(typeof mod.plugin.server === "function", "plugin.server is a function")
-check(mod.default === mod.plugin, "default === named plugin")
+check(typeof mod.default.id === "string", "default.id is a string (plugin identifier)")
+check(mod.default.id === "oc-dw", "default.id is 'oc-dw'")
 check(typeof mod.DynamicWorkflowsPlugin === "function", "DynamicWorkflowsPlugin export exists")
 check(mod.default.server === mod.DynamicWorkflowsPlugin, "default.server === DynamicWorkflowsPlugin")
 
@@ -98,12 +97,14 @@ try {
     },
   }
 
+  const mockToolContext = { directory: cwd, worktree: undefined, metadata: () => {}, abort: new AbortController().signal, sessionID: 'test', messageID: 'test', agent: 'build', ask: async () => {} }
   const hooks = await mod.default.server(ctx)
 
   check(hooks !== null && hooks !== undefined, "server() returns hooks")
   check(typeof hooks === "object", "hooks is an object")
   check(hooks.tool !== undefined, "hooks.tool exists")
   check(typeof hooks.tool === "object", "hooks.tool is an object")
+  check(typeof hooks.dispose === "function", "hooks.dispose exists (cleanup hook)")
   check(hooks.tool.dynamic_workflow_run !== undefined, "hooks.tool.dynamic_workflow_run exists")
   check(typeof hooks.tool.dynamic_workflow_run === "object", "tool definition is an object")
   check(typeof hooks.tool.dynamic_workflow_run.description === "string", "tool has description string")
@@ -128,12 +129,14 @@ try {
     objective: "Create a README with project overview",
     dry_run: true,
     background: false,
-  }, {})
+  }, mockToolContext)
 
-  check(typeof dryResult === "string", "dry-run returns a string")
-  check(dryResult.length > 20, "dry-run result is substantial")
-  check(dryResult.includes(".opencode/dynamic-workflows/runs/"), "result references run directory")
-  check(dryResult.toLowerCase().includes("planned") || dryResult.toLowerCase().includes("dry run"), "result indicates dry run")
+  check(typeof dryResult === "object", "dry-run returns a structured ToolResult")
+  check(typeof dryResult.output === "string", "dry-run has output string")
+  check(dryResult.output.length > 20, "dry-run output is substantial")
+  check(dryResult.output.includes(".opencode/dynamic-workflows/runs/"), "output references run directory")
+  check(dryResult.output.toLowerCase().includes("planned") || dryResult.output.toLowerCase().includes("dry run") || (dryResult.title && dryResult.title.toLowerCase().includes("dry run")), "result indicates dry run")
+  check(dryResult.metadata !== undefined, "dry-run has metadata")
 
   // 3b. Verify state file was written
   const runsDir = join(cwd, ".opencode", "dynamic-workflows", "runs")
@@ -196,10 +199,11 @@ try {
     token_budget: 100000,
     dry_run: true,
     background: false,
-  }, {})
+  }, mockToolContext)
 
-  check(typeof fullResult === "string", "full-options dry-run returns a string")
-  check(fullResult.length > 0, "full-options result is non-empty")
+  check(typeof fullResult === "object", "full-options dry-run returns a structured ToolResult")
+  check(typeof fullResult.output === "string", "full-options has output string")
+  check(fullResult.output.length > 0, "full-options output is non-empty")
 
   // ---------------------------------------------------------------------------
   // Step 5: Verify error handling
@@ -208,7 +212,7 @@ try {
 
   // Null args
   try {
-    await hooks.tool.dynamic_workflow_run.execute(null, {})
+    await hooks.tool.dynamic_workflow_run.execute(null, mockToolContext)
     check(false, "should reject null args")
   } catch (e) {
     check(e.message.includes("requires an object"), "rejects null args with clear message")
@@ -216,7 +220,7 @@ try {
 
   // Empty objective
   try {
-    await hooks.tool.dynamic_workflow_run.execute({ objective: "" }, {})
+    await hooks.tool.dynamic_workflow_run.execute({ objective: "" }, mockToolContext)
     check(false, "should reject empty objective")
   } catch (e) {
     check(e.message.includes("non-empty objective"), "rejects empty objective with clear message")
@@ -224,7 +228,7 @@ try {
 
   // Missing objective
   try {
-    await hooks.tool.dynamic_workflow_run.execute({}, {})
+    await hooks.tool.dynamic_workflow_run.execute({}, mockToolContext)
     check(false, "should reject missing objective")
   } catch (e) {
     check(e.message.includes("non-empty objective"), "rejects missing objective with clear message")
