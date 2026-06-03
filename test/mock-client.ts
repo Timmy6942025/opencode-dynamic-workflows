@@ -27,6 +27,9 @@ return result.text
   /** Override to customize async worker responses per label. */
   workerResponseFn: ((sessionId: string, prompt: string) => string) | undefined
 
+  /** Override to customize verifier prompt responses. */
+  verifierResponseFn: ((sessionId: string, text: string) => PromptResult) | undefined
+
   async createSession(title: string): Promise<string> {
     const id = `session-${this.sessions.length + 1}-${title.replace(/[^a-z0-9]+/gi, "-").slice(0, 24)}`
     this.sessions.push(id)
@@ -57,6 +60,9 @@ return result.text
 
     // Verifier
     if (text.includes("independent verifier") || text.includes("judge the worker")) {
+      if (this.verifierResponseFn) {
+        return this.verifierResponseFn(sessionId, text)
+      }
       return {
         text: "pass",
         structured: {

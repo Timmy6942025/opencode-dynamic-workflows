@@ -302,3 +302,62 @@ test("WorkflowRuntime.runAgent handles errors gracefully", async () => {
   assert.equal(result.text, "")
   assert.equal(result.tokensUsed, 0)
 })
+
+test("WorkflowRuntime.adversarial handles verifier rejection", async () => {
+  const client = new MockWorkflowClient()
+  client.verifierResponseFn = () => ({
+    text: "fail",
+    structured: {
+      pass: false,
+      confidence: 0.85,
+      issues: ["Missing error handling", "No edge case coverage"],
+      evidence: ["Only basic case tested"],
+    },
+  })
+
+  const runtime = new WorkflowRuntime(client, makeState(), makeOptions(), new SilentReporter())
+  const worker = runtime.spawn("Worker", "Write code")
+  const { worker: workerResult, verification } = await runtime.adversarial({
+    worker,
+    rubric: ["Error handling present", "Edge cases covered"],
+  })
+
+  assert.ok(workerResult.text, "worker should produce output")
+  assert.equal(verification.pass, false, "verifier should reject")
+  assert.equal(verification.confidence, 0.85)
+  assert.deepEqual(verification.issues, ["Missing error handling", "No edge case coverage"])
+  assert.deepEqual(verification.evidence, ["Only basic case tested"])
+})
+
+test("WorkflowRuntime.adversarial falls back to regex when no structured output", async () => {
+  const client = new MockWorkflowClient()
+  // Return plain text without structured output — triggers regex fallback
+  client.verifierResponseFn = () => ({
+    text: "The output passed all checks.",
+  })
+
+  const runtime = new WorkflowRuntime(client, makeState(), makeOptions(), new SilentReporter())
+  const worker = runtime.spawn("Worker", "Write code")
+  const { verification } = await runtime.adversarial({ worker })
+
+  assert.equal(verification.pass, true, "regex should match 'passed'")
+  assert.equal(verification.confidence, 0.4, "should use default confidence")
+  assert.ok(verification.issues.length > 0, "should include raw text as issue")
+  assert.deepEqual(verification.evidence, [], "no structured evidence")
+})
+
+test("WorkflowRuntime.adversarial regex fallback rejects on failure text", async () => {
+  const client = new MockWorkflowClient()
+  client.verifierResponseFn = () => ({
+    text: "The output fails to meet the criteria.",
+  })
+
+  const runtime = new WorkflowRuntime(client, makeState(), makeOptions(), new SilentReporter())
+  const worker = runtime.spawn("Worker", "Write code")
+  const { verification } = await runtime.adversarial({ worker })
+
+  assert.equal(verification.pass, false, "regex should not match 'fails'")
+  assert.equal(verification.confidence, 0.4)
+})
+
+
