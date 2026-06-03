@@ -1,27 +1,6 @@
+import type { OpencodeClient } from "@opencode-ai/sdk"
 import type { ClientPromptOptions, PromptResult, ShellResult, WorkflowClient } from "./types.js"
 import { promptResultFromRaw, unwrapResponse } from "./util.js"
-
-/**
- * Minimal interface for the SDK client shape we use.
- *
- * We accept `unknown` at construction and validate the shape at runtime,
- * because the SDK's generated `OpencodeClient` type is too complex to
- * match with a hand-written interface.
- */
-interface SdkSessionMethods {
-  create: (options: unknown) => Promise<unknown>
-  prompt: (options: unknown) => Promise<unknown>
-  promptAsync: (options: unknown) => Promise<unknown>
-  messages: (options: unknown) => Promise<unknown>
-  shell: (options: unknown) => Promise<unknown>
-  delete: (options: unknown) => Promise<unknown>
-  abort: (options: unknown) => Promise<unknown>
-}
-
-interface SdkClientLike {
-  session: SdkSessionMethods
-  app?: { log?: (options: unknown) => unknown }
-}
 
 function withContext<T>(operation: string, fn: () => Promise<T>): Promise<T> {
   return fn().catch((error) => {
@@ -38,21 +17,20 @@ function withContext<T>(operation: string, fn: () => Promise<T>): Promise<T> {
 /**
  * WorkflowClient backed by OpenCode's native SDK client (`ctx.client`).
  *
- * Uses the SDK's typed request objects directly — no manual body construction.
- * The `client` parameter is `ctx.client` from the Plugin context (OpencodeClient).
+ * Accepts the typed `OpencodeClient` from `@opencode-ai/sdk` directly.
+ * For test compatibility, also accepts any object with a `.session` property.
  */
 export class SdkLikeWorkflowClient implements WorkflowClient {
-  private readonly sdk: SdkClientLike
+  private readonly sdk: OpencodeClient
 
   constructor(
-    client: unknown,
+    client: OpencodeClient,
     private readonly directory?: string,
   ) {
-    const c = client as Record<string, unknown> | undefined
-    if (!c || typeof c !== "object" || typeof c.session !== "object" || c.session === null) {
-      throw new Error("SdkLikeWorkflowClient requires a valid SDK client with a session property.")
+    if (!client || typeof client !== "object" || !("session" in client)) {
+      throw new Error("SdkLikeWorkflowClient requires a valid OpencodeClient with a session property.")
     }
-    this.sdk = c as unknown as SdkClientLike
+    this.sdk = client
   }
 
   async createSession(title: string, parent?: string): Promise<string> {
