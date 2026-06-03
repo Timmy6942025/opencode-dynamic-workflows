@@ -34,11 +34,23 @@ export function unwrapResponse<T = unknown>(response: unknown): T {
   return response as T
 }
 
+interface PartLike {
+  type?: string
+  text?: string
+  content?: string
+}
+
+interface MessageDataLike {
+  parts?: PartLike[]
+  text?: string
+  message?: string
+}
+
 export function extractTextFromParts(value: unknown): string {
-  const data = unwrapResponse<any>(value)
-  const parts = Array.isArray(data?.parts) ? data.parts : Array.isArray(data) ? data : []
+  const data = unwrapResponse<MessageDataLike>(value)
+  const parts = Array.isArray(data?.parts) ? data.parts : Array.isArray(data) ? (data as unknown as PartLike[]) : []
   const text = parts
-    .map((part: any) => {
+    .map((part) => {
       if (part?.type === "text" && typeof part.text === "string") return part.text
       if (typeof part?.text === "string") return part.text
       if (typeof part?.content === "string") return part.content
@@ -52,8 +64,14 @@ export function extractTextFromParts(value: unknown): string {
   return ""
 }
 
+interface StructuredOutputDataLike {
+  info?: { structured_output?: unknown; structuredOutput?: unknown }
+  structured_output?: unknown
+  structuredOutput?: unknown
+}
+
 export function extractStructuredOutput(value: unknown): unknown {
-  const data = unwrapResponse<any>(value)
+  const data = unwrapResponse<StructuredOutputDataLike>(value)
   return (
     data?.info?.structured_output ??
     data?.info?.structuredOutput ??

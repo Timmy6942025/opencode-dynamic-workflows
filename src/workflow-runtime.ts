@@ -28,6 +28,8 @@ interface AgentInternal {
   error?: string
   status: "running" | "completed" | "failed"
   tokensUsed: number
+  /** AbortController used to cancel pollForCompletion on timeout or explicit abort. */
+  abort: AbortController
 }
 
 export interface SynthesisOptions {
@@ -57,6 +59,21 @@ interface ShellResultLocal {
   stderr: string
 }
 
+/** Typed shape of messages returned by session.messages(). */
+interface PollMessagePart {
+  type?: string
+  text?: string
+}
+
+interface PollMessage {
+  role?: string
+  parts?: PollMessagePart[]
+  content?: PollMessagePart[]
+  text?: string
+}
+
+type PollMessagesResponse = PollMessage[] | { messages?: PollMessage[] }
+
 // ---------------------------------------------------------------------------
 // Verification schema (reused from old runner)
 // ---------------------------------------------------------------------------
@@ -80,6 +97,9 @@ const VERIFICATION_SCHEMA = {
 export class WorkflowRuntime {
   /** Every agent spawned during script execution. */
   readonly agents: SpawnedAgent[] = []
+
+  /** Map from SpawnedAgent.id to its internal state (for abort support). */
+  private readonly agentMap = new Map<string, AgentInternal>()
 
   private totalTokensUsed = 0
 
@@ -108,6 +128,7 @@ export class WorkflowRuntime {
       startedAt: nowIso(),
       status: "running",
       tokensUsed: 0,
+      abort: new AbortController(),
     }
     const resultPromise = this.runAgent(agent)
     const spawned: SpawnedAgent = {
@@ -116,6 +137,7 @@ export class WorkflowRuntime {
       result: resultPromise,
     }
     this.agents.push(spawned)
+    this.agentMap.set(agent.id, agent)
     return spawned
   }
 
@@ -128,9 +150,16 @@ export class WorkflowRuntime {
       if (timeoutMs && timeoutMs > 0) {
         return Promise.race([
           agent.result,
-          new Promise<AgentResult>((resolve) =>
-            setTimeout(() => resolve({ text: "", error: "timeout", tokensUsed: 0 }), timeoutMs),
-          ),
+          new Promise<AgentResult>((resolve) => {
+            const timer = setTimeout(() => {
+              // Abort the polling loop so it doesn't linger
+              const internal = this.agentMap.get(agent.id)
+              if (internal) this.abortAgent(internal)
+              resolve({ text: "", error: "timeout", tokensUsed: 0 })
+            }, timeoutMs)
+            // Prevent timer from keeping Node alive if result wins the race
+            if (typeof timer === "object" && "unref" in timer) timer.unref()
+          }),
         ])
       }
       return agent.result
@@ -349,6 +378,13 @@ export class WorkflowRuntime {
   // Internals
   // -----------------------------------------------------------------------
 
+  /**
+   * Abort an agent's polling loop so it doesn't linger after a timeout.
+   */
+  private abortAgent(agent: AgentInternal): void {
+    agent.abort.abort()
+  }
+
   private async runAgent(agent: AgentInternal): Promise<AgentResult> {
     try {
       const model = agent.model ?? resolveModel(agent.role, undefined, this.options.models)
@@ -398,9 +434,9 @@ export class WorkflowRuntime {
     const maxPollMs = 15 * 60 * 1000 // 15 min safety net
     const deadline = Date.now() + maxPollMs
 
-    while (Date.now() < deadline) {
+    while (Date.now() < deadline && !agent.abort.signal.aborted) {
       const raw = await this.client.messages(sessionId)
-      const data = raw as any
+      const data = raw as PollMessagesResponse
       const messages = Array.isArray(data) ? data : Array.isArray(data?.messages) ? data.messages : []
 
       // Look for the last assistant message with text content
@@ -410,16 +446,27 @@ export class WorkflowRuntime {
         const parts = msg?.parts ?? msg?.content ?? []
         const text = Array.isArray(parts)
           ? parts
-              .filter((p: any) => p?.type === "text" && typeof p.text === "string")
-              .map((p: any) => p.text)
+              .filter((p) => p?.type === "text" && typeof p.text === "string")
+              .map((p) => p.text as string)
               .join("\n")
           : typeof msg?.text === "string" ? msg.text : ""
         if (text) return { text }
       }
 
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
+      // Use a cancellable delay so we exit promptly when aborted
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, pollIntervalMs)
+        if (typeof timer === "object" && "unref" in timer) timer.unref()
+        agent.abort.signal.addEventListener("abort", () => {
+          clearTimeout(timer)
+          resolve()
+        }, { once: true })
+      })
     }
 
+    if (agent.abort.signal.aborted) {
+      throw new Error(`Agent ${agent.id} was aborted.`)
+    }
     throw new Error(`Agent ${agent.id} timed out after ${maxPollMs}ms waiting for response.`)
   }
 

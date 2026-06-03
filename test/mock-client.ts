@@ -1,11 +1,21 @@
 import type { ClientPromptOptions, PromptResult, ShellResult, WorkflowClient } from "../src/types.js"
 
+/**
+ * A richer mock client that:
+ * - Tracks promptAsync calls separately from prompt calls
+ * - Stores per-session responses so messages() returns the right thing
+ * - Differentiates responses by prompt content (planner, synthesizer, verifier, worker)
+ */
 export class MockWorkflowClient implements WorkflowClient {
   sessions: string[] = []
   prompts: Array<{ sessionId: string; text: string; options?: ClientPromptOptions }> = []
+  asyncPrompts: Array<{ sessionId: string; text: string; options?: ClientPromptOptions }> = []
   shells: string[] = []
   deleted: string[] = []
   aborted: string[] = []
+
+  /** Per-session response store for pollForCompletion. */
+  private sessionResponses = new Map<string, string>()
 
   /** The script the mock planner will return. */
   scriptToReturn = `
@@ -13,6 +23,9 @@ log("info", "Starting mock workflow")
 const [result] = await wait(spawn("Mock Worker", "Do the work", { role: "worker" }))
 return result.text
 `
+
+  /** Override to customize async worker responses per label. */
+  workerResponseFn: ((sessionId: string, prompt: string) => string) | undefined
 
   async createSession(title: string): Promise<string> {
     const id = `session-${this.sessions.length + 1}-${title.replace(/[^a-z0-9]+/gi, "-").slice(0, 24)}`
@@ -60,16 +73,21 @@ return result.text
   }
 
   async promptAsync(sessionId: string, text: string, options?: ClientPromptOptions): Promise<void> {
-    // Fire-and-forget: record the prompt but resolve immediately.
-    this.prompts.push({ sessionId, text, options })
+    this.asyncPrompts.push({ sessionId, text, options })
+
+    // Determine the response text and store it for messages() polling
+    const response = this.workerResponseFn
+      ? this.workerResponseFn(sessionId, text)
+      : `async worker output for ${sessionId}`
+    this.sessionResponses.set(sessionId, response)
   }
 
-  async messages(_sessionId: string): Promise<unknown> {
-    // Return the last worker prompt response so pollForCompletion finds it.
+  async messages(sessionId: string): Promise<unknown> {
+    const text = this.sessionResponses.get(sessionId) ?? `async worker output for ${sessionId}`
     return [
       {
         role: "assistant",
-        parts: [{ type: "text", text: `worker output for ${_sessionId}` }],
+        parts: [{ type: "text", text }],
       },
     ]
   }
