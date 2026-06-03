@@ -12,11 +12,13 @@
   "exports": {
     ".": {
       "types": "./dist/src/index.d.ts",
-      "import": "./dist/src/index.js"
+      "import": "./dist/src/index.js",
+      "require": "./dist/src/index.cjs"
     },
-    "./plugin": {
+    "./server": {
       "types": "./dist/src/plugin.d.ts",
-      "import": "./dist/src/plugin.js"
+      "import": "./dist/src/plugin.js",
+      "require": "./dist/src/plugin.cjs"
     }
   },
   "files": [
@@ -25,7 +27,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && esbuild dist/src/index.js --bundle --platform=node --format=cjs --outfile=dist/src/index.cjs --target=node20 && esbuild dist/src/plugin.js --bundle --platform=node --format=cjs --outfile=dist/src/plugin.cjs --target=node20",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test dist/test/*.test.js",
     "qa": "npm run build && node --test dist/test/*.test.js && node test/live-opencode-test.mjs",
@@ -37,6 +39,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "esbuild": "^0.28.0",
     "typescript": "^5.7.0"
   },
   "engines": {

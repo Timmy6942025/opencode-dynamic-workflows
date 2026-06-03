@@ -1,8 +1,10 @@
+// OpenCode V1 plugin format: default export must be PluginModule { server: fn }.
+export { default } from "./plugin.js"
 export { SdkLikeWorkflowClient } from "./client.js"
 export { DynamicWorkflowRunner } from "./runner.js"
 export { FileWorkflowStore } from "./state.js"
 export { defaultWorkflowOptions, optionsFromState } from "./options.js"
-export { DynamicWorkflowsPlugin, plugin, default } from "./plugin.js"
+export { DynamicWorkflowsPlugin, plugin } from "./plugin.js"
 export { requestApproval, approveWorkflow, rejectWorkflow } from "./approval.js"
 export { WorkflowRuntime } from "./workflow-runtime.js"
 export { ScriptExecutor } from "./script-executor.js"

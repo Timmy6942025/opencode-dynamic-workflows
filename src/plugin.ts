@@ -196,6 +196,8 @@ function formatWorkflowResult(state: WorkflowState, dryRun = false): string {
   return lines.join("\n")
 }
 
-export const plugin: PluginModule = { server: DynamicWorkflowsPlugin }
-
-export default plugin
+// OpenCode's V1 plugin format requires default export to be a PluginModule object.
+// readV1Plugin() checks isRecord(default) and looks for a .server property.
+const DynamicWorkflowsPluginModule: PluginModule = { id: "oc-dw", server: DynamicWorkflowsPlugin }
+export const plugin: PluginModule = DynamicWorkflowsPluginModule
+export default DynamicWorkflowsPluginModule

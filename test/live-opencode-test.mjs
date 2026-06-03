@@ -51,13 +51,13 @@ const distPath = join(scriptDir, "..", "dist", "src", "index.js")
 const mod = await import(pathToFileURL(distPath).href)
 
 check(mod.default, "default export exists")
-check(typeof mod.default === "object", "default export is an object (PluginModule)")
+check(typeof mod.default === "object", "default export is an object (V1 PluginModule format)")
 check(typeof mod.default.server === "function", "default.server is a function")
-check(typeof mod.plugin === "object", "named 'plugin' export exists")
+check(typeof mod.plugin === "object", "named 'plugin' export exists (PluginModule)")
 check(typeof mod.plugin.server === "function", "plugin.server is a function")
-check(mod.default.server === mod.plugin.server, "default.server === plugin.server")
+check(mod.default === mod.plugin, "default === named plugin")
 check(typeof mod.DynamicWorkflowsPlugin === "function", "DynamicWorkflowsPlugin export exists")
-check(mod.default.server === mod.DynamicWorkflowsPlugin, "server points to DynamicWorkflowsPlugin")
+check(mod.default.server === mod.DynamicWorkflowsPlugin, "default.server === DynamicWorkflowsPlugin")
 
 // Verify all public exports
 check(typeof mod.SdkLikeWorkflowClient === "function", "exports SdkLikeWorkflowClient")

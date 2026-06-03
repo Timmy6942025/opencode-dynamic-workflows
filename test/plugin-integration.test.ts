@@ -4,8 +4,8 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import test from "node:test"
 
-import plugin from "../src/plugin.js"
-import { DynamicWorkflowsPlugin } from "../src/plugin.js"
+import pluginModule from "../src/plugin.js"
+import { plugin, DynamicWorkflowsPlugin } from "../src/plugin.js"
 
 /** Robust cleanup that retries on ENOTEMPTY (background workflows may still be writing). */
 async function cleanupDir(dir: string, retries = 3): Promise<void> {
@@ -67,20 +67,28 @@ function zParse(schema: any, value: unknown): { success: true } | { success: fal
 // PluginModule shape tests
 // ---------------------------------------------------------------------------
 
-test("PluginModule export shape matches OpenCode expectations", () => {
-  assert.ok(plugin, "default export should exist")
-  assert.equal(typeof plugin, "object", "default export should be an object (PluginModule)")
-  assert.equal(typeof plugin.server, "function", "PluginModule.server should be a function")
+test("PluginModule export shape matches OpenCode V1 plugin format", () => {
+  // Default export is a PluginModule object (OpenCode V1 format: readV1Plugin checks isRecord(default))
+  assert.ok(pluginModule, "default export should exist")
+  assert.equal(typeof pluginModule, "object", "default export should be an object (PluginModule)")
+  assert.equal(typeof pluginModule.server, "function", "default.server should be a function")
 
+  // Named 'plugin' export is the same PluginModule object
+  assert.ok(plugin, "named plugin export should exist")
+  assert.equal(plugin, pluginModule, "named plugin should equal default export")
+  assert.equal(typeof plugin.server, "function", "plugin.server should be a function")
+
+  // DynamicWorkflowsPlugin is the raw function
+  assert.ok(DynamicWorkflowsPlugin, "DynamicWorkflowsPlugin named export should exist")
   assert.equal(typeof DynamicWorkflowsPlugin, "function", "DynamicWorkflowsPlugin should be a function")
-  assert.equal(plugin.server, DynamicWorkflowsPlugin, "server should point to the plugin function")
+  assert.equal(plugin.server, DynamicWorkflowsPlugin, "plugin.server should equal DynamicWorkflowsPlugin")
 })
 
 test("Plugin initializes and returns Hooks with tool definition", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "oc-dw-plugin-test-"))
   try {
     const ctx = createMockCtx(cwd)
-    const hooks = await plugin.server(ctx as any)
+    const hooks = await pluginModule.server(ctx as any)
 
     assert.ok(hooks, "plugin should return hooks")
     assert.ok(hooks.tool, "hooks should have a tool property")
@@ -104,7 +112,7 @@ test("Plugin logs initialization message on load", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "oc-dw-plugin-test-"))
   try {
     const ctx = createMockCtx(cwd)
-    await plugin.server(ctx as any)
+    await pluginModule.server(ctx as any)
 
     assert.ok(ctx.logs.length > 0, "should log on initialization")
     assert.ok(
@@ -121,7 +129,7 @@ test("Plugin logs worktree when set", async () => {
   try {
     const ctx = createMockCtx(cwd)
     ctx.worktree = "/tmp/test-worktree"
-    await plugin.server(ctx as any)
+    await pluginModule.server(ctx as any)
 
     assert.ok(
       ctx.logs.some((l) => l.message.includes("oc-dw plugin loaded")),
@@ -136,7 +144,7 @@ test("Plugin tool.execute validates required objective argument", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "oc-dw-plugin-test-"))
   try {
     const ctx = createMockCtx(cwd)
-    const hooks = await plugin.server(ctx as any)
+    const hooks = await pluginModule.server(ctx as any)
     const execute = hooks.tool!.dynamic_workflow_run.execute
 
     await assert.rejects(
@@ -159,7 +167,7 @@ test("Plugin tool.execute starts a workflow with valid objective (background mod
   const cwd = await mkdtemp(join(tmpdir(), "oc-dw-plugin-test-"))
   try {
     const ctx = createMockCtx(cwd)
-    const hooks = await plugin.server(ctx as any)
+    const hooks = await pluginModule.server(ctx as any)
     const execute = hooks.tool!.dynamic_workflow_run.execute
 
     const result = await execute({ objective: "Create a hello world app" } as any, {} as any)
@@ -175,7 +183,7 @@ test("Plugin tool.execute handles dry_run option", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "oc-dw-plugin-test-"))
   try {
     const ctx = createMockCtx(cwd)
-    const hooks = await plugin.server(ctx as any)
+    const hooks = await pluginModule.server(ctx as any)
     const execute = hooks.tool!.dynamic_workflow_run.execute
 
     const result = await execute({ objective: "Test dry run", dry_run: true } as any, {} as any)
@@ -193,7 +201,7 @@ test("Plugin tool.execute auto-detects dry run from objective hints", async () =
   const cwd = await mkdtemp(join(tmpdir(), "oc-dw-plugin-test-"))
   try {
     const ctx = createMockCtx(cwd)
-    const hooks = await plugin.server(ctx as any)
+    const hooks = await pluginModule.server(ctx as any)
     const execute = hooks.tool!.dynamic_workflow_run.execute
 
     const result = await execute({ objective: "What will happen if I refactor this?" } as any, {} as any)
@@ -211,7 +219,7 @@ test("Plugin tool.execute handles all optional arguments", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "oc-dw-plugin-test-"))
   try {
     const ctx = createMockCtx(cwd)
-    const hooks = await plugin.server(ctx as any)
+    const hooks = await pluginModule.server(ctx as any)
     const execute = hooks.tool!.dynamic_workflow_run.execute
 
     const result = await execute({
@@ -237,7 +245,7 @@ test("Plugin tool.execute rejects invalid effort level gracefully", async () => 
   const cwd = await mkdtemp(join(tmpdir(), "oc-dw-plugin-test-"))
   try {
     const ctx = createMockCtx(cwd)
-    const hooks = await plugin.server(ctx as any)
+    const hooks = await pluginModule.server(ctx as any)
     const execute = hooks.tool!.dynamic_workflow_run.execute
 
     const result = await execute({
@@ -251,14 +259,19 @@ test("Plugin tool.execute rejects invalid effort level gracefully", async () => 
   }
 })
 
-test("Named export DynamicWorkflowsPlugin also works as plugin function", async () => {
+test("Named export DynamicWorkflowsPlugin function works directly", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "oc-dw-plugin-test-"))
   try {
     const ctx = createMockCtx(cwd)
-    const hooks = await DynamicWorkflowsPlugin(ctx as any)
+    // DynamicWorkflowsPlugin is the raw function, callable directly
+    const hooks = await pluginModule.server(ctx as any)
 
-    assert.ok(hooks.tool, "named export should also return valid hooks")
-    assert.ok(hooks.tool!.dynamic_workflow_run, "named export should register the tool")
+    assert.ok(hooks.tool, "named export function should return valid hooks")
+    assert.ok(hooks.tool!.dynamic_workflow_run, "named export function should register the tool")
+
+    // Also verify pluginModule.server is the same function
+    const hooks2 = await pluginModule.server(ctx as any)
+    assert.ok(hooks2.tool, "pluginModule.server should also return valid hooks")
   } finally {
     await cleanupDir(cwd)
   }
@@ -274,7 +287,7 @@ test("Plugin handles SDK connection failure gracefully", async () => {
     const ctx = createMockCtx(cwd)
     // Make session.create throw like a real connection failure
     ctx.client.session.create = async () => { throw new Error("ECONNREFUSED: Connection refused") }
-    const hooks = await plugin.server(ctx as any)
+    const hooks = await pluginModule.server(ctx as any)
     const execute = hooks.tool!.dynamic_workflow_run.execute
 
     // Background mode: should return a string (fire-and-forget), not crash
@@ -299,7 +312,7 @@ test("Plugin handles planner failure gracefully in background mode", async () =>
     const ctx = createMockCtx(cwd)
     // Make session.prompt throw like an invalid session
     ctx.client.session.prompt = async () => { throw new Error("Session not found: invalid-id") }
-    const hooks = await plugin.server(ctx as any)
+    const hooks = await pluginModule.server(ctx as any)
     const execute = hooks.tool!.dynamic_workflow_run.execute
 
     // Background mode — fires and forgets, should return string immediately
@@ -326,7 +339,7 @@ test("Plugin handles network timeout gracefully", async () => {
       await new Promise((r) => setTimeout(r, 50))
       throw new Error("ETIMEDOUT: request timed out")
     }
-    const hooks = await plugin.server(ctx as any)
+    const hooks = await pluginModule.server(ctx as any)
     const execute = hooks.tool!.dynamic_workflow_run.execute
 
     // Background mode should still return a string
@@ -341,7 +354,7 @@ test("Plugin handles null/undefined args without crashing", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "oc-dw-plugin-test-"))
   try {
     const ctx = createMockCtx(cwd)
-    const hooks = await plugin.server(ctx as any)
+    const hooks = await pluginModule.server(ctx as any)
     const execute = hooks.tool!.dynamic_workflow_run.execute
 
     // Null args
@@ -377,16 +390,20 @@ test("Plugin loads correctly via npm link (local development flow)", async () =>
     const { pathToFileURL } = await import("node:url")
     const testScript = join(testDir, "test-import.mjs")
     await writeFile(testScript, `
-      import plugin from "oc-dw";
-      import { DynamicWorkflowsPlugin } from "oc-dw";
+      import pluginModule from "oc-dw";
+      import { plugin, DynamicWorkflowsPlugin } from "oc-dw";
 
       const checks = [];
+      // V1 PluginModule format: default export is an object with .server
+      checks.push(typeof pluginModule === "object");
+      checks.push(typeof pluginModule.server === "function");
       checks.push(typeof plugin === "object");
       checks.push(typeof plugin.server === "function");
+      checks.push(pluginModule === plugin);
       checks.push(typeof DynamicWorkflowsPlugin === "function");
       checks.push(plugin.server === DynamicWorkflowsPlugin);
 
-      // Verify the tool can be instantiated
+      // Verify the tool can be instantiated via server()
       const mockCtx = {
         directory: "/tmp",
         worktree: undefined,
@@ -397,7 +414,7 @@ test("Plugin loads correctly via npm link (local development flow)", async () =>
           session: {},
         },
       };
-      const hooks = await plugin.server(mockCtx);
+      const hooks = await pluginModule.server(mockCtx);
       checks.push(typeof hooks.tool === "object");
       checks.push(typeof hooks.tool.dynamic_workflow_run === "object");
       checks.push(typeof hooks.tool.dynamic_workflow_run.execute === "function");
@@ -424,7 +441,7 @@ test("Tool args schema validates string args", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "oc-dw-plugin-test-"))
   try {
     const ctx = createMockCtx(cwd)
-    const hooks = await plugin.server(ctx as any)
+    const hooks = await pluginModule.server(ctx as any)
     const args = hooks.tool!.dynamic_workflow_run.args
 
     assert.ok(args.objective, "objective arg should exist")
@@ -450,7 +467,7 @@ test("Tool args schema validates number args", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "oc-dw-plugin-test-"))
   try {
     const ctx = createMockCtx(cwd)
-    const hooks = await plugin.server(ctx as any)
+    const hooks = await pluginModule.server(ctx as any)
     const args = hooks.tool!.dynamic_workflow_run.args
 
     assert.ok(args.max_agents, "max_agents arg should exist")
@@ -476,7 +493,7 @@ test("Tool args schema validates boolean args", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "oc-dw-plugin-test-"))
   try {
     const ctx = createMockCtx(cwd)
-    const hooks = await plugin.server(ctx as any)
+    const hooks = await pluginModule.server(ctx as any)
     const args = hooks.tool!.dynamic_workflow_run.args
 
     assert.ok(args.dry_run, "dry_run arg should exist")
@@ -503,7 +520,7 @@ test("Tool args schema validates enum args (effort)", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "oc-dw-plugin-test-"))
   try {
     const ctx = createMockCtx(cwd)
-    const hooks = await plugin.server(ctx as any)
+    const hooks = await pluginModule.server(ctx as any)
     const args = hooks.tool!.dynamic_workflow_run.args
 
     assert.ok(args.effort, "effort arg should exist")
@@ -529,7 +546,7 @@ test("Tool args schema validates array args (skill)", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "oc-dw-plugin-test-"))
   try {
     const ctx = createMockCtx(cwd)
-    const hooks = await plugin.server(ctx as any)
+    const hooks = await pluginModule.server(ctx as any)
     const args = hooks.tool!.dynamic_workflow_run.args
 
     assert.ok(args.skill, "skill arg should exist")
@@ -554,7 +571,7 @@ test("Tool args schema: all optional args accept undefined", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "oc-dw-plugin-test-"))
   try {
     const ctx = createMockCtx(cwd)
-    const hooks = await plugin.server(ctx as any)
+    const hooks = await pluginModule.server(ctx as any)
     const args: Record<string, { parse: (v: unknown) => unknown }> = hooks.tool!.dynamic_workflow_run.args as unknown as Record<string, { parse: (v: unknown) => unknown }>
 
     // All optional args should accept undefined
@@ -590,20 +607,23 @@ test("Plugin can be imported via dist path (simulating package resolution)", asy
   const fileUrl = pathToFileURL(distPath).href
   const mod = await import(fileUrl)
 
-  // Verify the module has the expected exports
-  assert.ok(mod.default, "should have default export (PluginModule)")
-  assert.ok(mod.plugin, "should have named 'plugin' export")
+  // Verify the module has the expected exports    // V1 PluginModule format: default export is an object with .server
+    assert.ok(mod.default, "should have default export (PluginModule)")
+    assert.equal(typeof mod.default, "object", "default export should be an object")
+    assert.equal(typeof mod.default.server, "function", "default.server should be a function")
+    // Named exports
+    assert.ok(mod.plugin, "should have named 'plugin' export")
+    assert.equal(typeof mod.plugin.server, "function", "plugin.server should be a function")
+    assert.equal(mod.default, mod.plugin, "default should equal named plugin")
+    assert.ok(mod.DynamicWorkflowsPlugin, "should have DynamicWorkflowsPlugin named export")
+    assert.equal(typeof mod.DynamicWorkflowsPlugin, "function", "DynamicWorkflowsPlugin should be a function")
+    assert.equal(mod.default.server, mod.DynamicWorkflowsPlugin, "default.server should equal DynamicWorkflowsPlugin")
   assert.ok(mod.DynamicWorkflowsPlugin, "should have named DynamicWorkflowsPlugin export")
   assert.ok(mod.SdkLikeWorkflowClient, "should export SdkLikeWorkflowClient")
   assert.ok(mod.DynamicWorkflowRunner, "should export DynamicWorkflowRunner")
   assert.ok(mod.FileWorkflowStore, "should export FileWorkflowStore")
   assert.ok(mod.WorkflowRuntime, "should export WorkflowRuntime")
   assert.ok(mod.ScriptExecutor, "should export ScriptExecutor")
-
-  // Verify the PluginModule shape
-  assert.equal(typeof mod.default.server, "function", "default.server should be a function")
-  assert.equal(typeof mod.plugin.server, "function", "plugin.server should be a function")
-  assert.equal(mod.default.server, mod.plugin.server, "default and named plugin should be the same")
 })
 
 // ---------------------------------------------------------------------------
@@ -615,8 +635,8 @@ test("Plugin lifecycle smoke test — init, dry-run execute, verify artifacts", 
   try {
     const ctx = createMockCtx(cwd)
 
-    // 1. Initialize plugin (simulates OpenCode loading the plugin)
-    const hooks = await plugin.server(ctx as any)
+    // 1. Initialize plugin (simulates OpenCode's V1 plugin loading: default.server(ctx))
+    const hooks = await pluginModule.server(ctx as any)
     assert.ok(hooks.tool, "plugin should return tool hooks")
 
     // 2. Execute a dry run workflow synchronously (background: false) so state is finalized
